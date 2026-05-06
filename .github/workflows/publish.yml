@@ -32,8 +32,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6.4.0
         with:
-          node-version: '24'
-          check-latest: true
+          node-version: '24.13.0'
 
       - name: Set up Yarn
         run: |
@@ -48,6 +47,7 @@ jobs:
 
       - name: Build (dry run)
         if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
+        # Keep workflow_dispatch safe (no publishing), and keep runtime low by focusing on JVM/Android output.
         env:
           ORG_GRADLE_PROJECT_kotlin_js_yarn_download: "false"
         run: ./gradlew compileAndroidMain androidSourcesJar --no-configuration-cache
