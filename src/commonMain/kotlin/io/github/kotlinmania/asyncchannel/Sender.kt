@@ -48,6 +48,41 @@ public class Sender<T> internal constructor(
     }
 
     /**
+     * Forcefully pushes a message into the channel.
+     *
+     * If the channel is full, this method replaces an existing message in the
+     * channel and returns it as [ForceSendOutcome.Ok.replaced]. If the channel
+     * is closed, this method returns an error.
+     */
+    public fun forceSend(msg: T): ForceSendOutcome<T> {
+        while (true) {
+            val result = state.queue.trySend(msg)
+            when {
+                result.isSuccess -> {
+                    state.incrementSize()
+                    return ForceSendOutcome.Ok(replaced = null)
+                }
+                result.isClosed -> return ForceSendOutcome.Err(SendError(msg))
+                else -> {
+                    val removed = state.queue.tryReceive()
+                    if (removed.isSuccess) {
+                        state.decrementSize()
+                        val sendResult = state.queue.trySend(msg)
+                        return when {
+                            sendResult.isSuccess -> {
+                                state.incrementSize()
+                                ForceSendOutcome.Ok(replaced = removed.getOrThrow())
+                            }
+                            sendResult.isClosed -> ForceSendOutcome.Err(SendError(msg))
+                            else -> continue
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Closes the channel.
      *
      * Returns `true` if this call has closed the channel and it was not closed already.
@@ -133,4 +168,17 @@ public sealed interface SendOutcome<out T> {
 
     /** Failed to send because the channel was closed. */
     public data class Err<T>(public val error: SendError<T>) : SendOutcome<T>
+}
+
+/**
+ * Result of [Sender.forceSend].
+ *
+ * Mirrors the upstream `Result<Option<T>, SendError<T>>`.
+ */
+public sealed interface ForceSendOutcome<out T> {
+    /** Successfully sent, optionally carrying the replaced message. */
+    public data class Ok<T>(public val replaced: T?) : ForceSendOutcome<T>
+
+    /** Failed to send because the channel was closed. */
+    public data class Err<T>(public val error: SendError<T>) : ForceSendOutcome<T>
 }
