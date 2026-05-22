@@ -306,7 +306,11 @@ class BoundedTest {
 
         assertEquals(21, s.receiverCount())
         assertEquals(21, r.receiverCount())
-        assertEquals(20, receiverClones.size)
+
+        receiverClones.forEach { it.release() }
+
+        assertEquals(1, s.receiverCount())
+        assertEquals(1, r.receiverCount())
     }
 
     @Test
@@ -316,20 +320,42 @@ class BoundedTest {
 
         assertEquals(21, s.senderCount())
         assertEquals(21, r.senderCount())
-        assertEquals(20, senderClones.size)
+
+        senderClones.forEach { it.release() }
+
+        assertEquals(1, s.senderCount())
+        assertEquals(1, r.senderCount())
+    }
+
+    @Test
+    fun closeWakesSender() = runTest {
+        val (s, r) = bounded<Unit>(1)
+
+        val producer = launch {
+            assertSendOk(s.send(Unit))
+            assertSendErr(s.send(Unit), Unit)
+        }
+        val closer = launch {
+            delay(1000)
+            r.release()
+        }
+        producer.join()
+        closer.join()
     }
 
     @Test
     fun closeWakesReceiver() = runTest {
         val (s, r) = bounded<Unit>(1)
 
-        launch {
+        val consumer = launch {
             assertSame(RecvOutcome.Err, r.recv())
         }
-        launch {
+        val closer = launch {
             delay(1000)
-            s.close()
+            s.release()
         }
+        consumer.join()
+        closer.join()
     }
 
     @Test
@@ -367,6 +393,37 @@ class BoundedTest {
                 for (i in 0 until count) {
                     val ok = r.recv() as RecvOutcome.Ok<Int>
                     seen[ok.value] += 1
+                }
+            }
+        }
+        val producers = List(workers) {
+            async {
+                for (i in 0 until count) {
+                    assertSendOk(s.send(i))
+                }
+            }
+        }
+        producers.forEach { it.await() }
+        consumers.forEach { it.await() }
+
+        for (value in seen) {
+            assertEquals(workers, value)
+        }
+    }
+
+    @Test
+    fun mpmcStream() = runTest {
+        val count = 25_000
+        val workers = 4
+
+        val (s, r) = bounded<Int>(3)
+        val seen = IntArray(count)
+
+        val consumers = List(workers) {
+            async {
+                for (i in 0 until count) {
+                    val value = r.next() ?: error("unexpected end of stream")
+                    seen[value] += 1
                 }
             }
         }
