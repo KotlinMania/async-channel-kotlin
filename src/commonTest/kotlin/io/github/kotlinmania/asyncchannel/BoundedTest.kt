@@ -12,6 +12,24 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
+// Two upstream tests at the forget-blocked-sender and forget-blocked-receiver
+// positions in bounded tests pin a send or recv future, poll it exactly once,
+// then keep the pinned future alive on the stack for 500 ms while other
+// parallel tasks drive the channel. Under that model, an opening slot wakes
+// the pinned future's waker but no executor polls it again, so the slot
+// stays free for other senders or receivers. kotlinx.coroutines Channel does
+// not separate "signal ready" from "transfer the value": when a waiter
+// exists and a slot opens, the value is handed to the waiter's continuation,
+// which then resumes. There is no equivalent of "polled once, kept alive in
+// the wait list, never repolled". Faithfully porting those two upstream
+// tests would require either a custom Kotlin channel implementation that
+// exposes the upstream poll model or a different test that no longer
+// exercises the upstream invariant. Both options break the translation rule
+// that says don't invent a different test, so the two upstream tests are
+// intentionally unported. The duration helper from the upstream bounded
+// tests is unused on the Kotlin side because the only upstream callers are
+// those two unported tests.
+
 private fun assertSendOk(outcome: SendOutcome<*>) {
     assertSame(SendOutcome.Ok, outcome)
 }

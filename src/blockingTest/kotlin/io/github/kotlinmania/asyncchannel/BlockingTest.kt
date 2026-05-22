@@ -1,12 +1,33 @@
 // port-lint: source tests/bounded.rs
 package io.github.kotlinmania.asyncchannel
 
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class BlockingTest {
+    @Test
+    fun smokeBlocking() {
+        val (s, r) = bounded<Int>(1)
+
+        assertSame(SendOutcome.Ok, s.sendBlocking(7))
+        val first = r.tryRecv() as? TryRecvOutcome.Ok ?: error("expected Ok")
+        assertEquals(7, first.value)
+
+        assertSame(SendOutcome.Ok, s.sendBlocking(8))
+        val second = runBlocking { r.recv() } as? RecvOutcome.Ok ?: error("expected Ok")
+        assertEquals(8, second.value)
+
+        assertSame(SendOutcome.Ok, runBlocking { s.send(9) })
+        val third = r.recvBlocking() as? RecvOutcome.Ok ?: error("expected Ok")
+        assertEquals(9, third.value)
+
+        val empty = r.tryRecv() as? TryRecvOutcome.Err ?: error("expected Err")
+        assertSame(TryRecvError.Empty, empty.error)
+    }
+
     @Test
     fun sendBlockingRoundTrip() {
         val (s, r) = unbounded<Int>()
