@@ -28,7 +28,7 @@ plugins {
 }
 
 group = "io.github.kotlinmania"
-version = "0.1.0"
+version = "0.1.1"
 
 val androidCommandLineToolsRevision = "14742923"
 val projectCompileSdk = "34"
@@ -298,6 +298,17 @@ kotlin {
             }
         }
 
+        // sendBlocking / recvBlocking mirror upstream
+        // `cfg(all(feature = "std", not(target_family = "wasm")))`:
+        // available on every target that supports thread-blocking `runBlocking`
+        // (jvm + all native), absent on js/wasmJs/wasmWasi.
+        val blockingMain by creating { dependsOn(commonMain) }
+        val blockingTest by creating { dependsOn(commonTest) }
+
+        val jvmMain by getting { dependsOn(blockingMain) }
+        val jvmTest by getting { dependsOn(blockingTest) }
+        val nativeMain by getting { dependsOn(blockingMain) }
+        val nativeTest by getting { dependsOn(blockingTest) }
     }
     jvmToolchain(21)
 }

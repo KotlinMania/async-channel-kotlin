@@ -3,6 +3,7 @@ package io.github.kotlinmania.asyncchannel
 
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel as KxChannel
 
 /**
@@ -19,6 +20,7 @@ internal class ChannelState<T>(
 ) {
     private val sizeCounter: AtomicInt = AtomicInt(0)
     private val closed: AtomicBoolean = AtomicBoolean(false)
+    internal val closedSignal: CompletableDeferred<Unit> = CompletableDeferred()
 
     /** Number of currently active senders. */
     val senderCount: AtomicInt = AtomicInt(1)
@@ -45,9 +47,15 @@ internal class ChannelState<T>(
     fun close(): Boolean {
         if (!closed.compareAndSet(expectedValue = false, newValue = true)) return false
         queue.close()
+        closedSignal.complete(Unit)
         return true
     }
 
     /** Returns `true` if the channel has been closed for sending. */
     val isClosed: Boolean get() = closed.load()
+
+    /** Suspends until the channel is closed. Returns immediately if already closed. */
+    suspend fun awaitClosed() {
+        closedSignal.await()
+    }
 }
