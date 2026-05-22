@@ -7,6 +7,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -188,6 +189,29 @@ class BoundedTest {
         }
         producer.await()
         consumer.await()
+    }
+
+    @Test
+    fun closed() = runTest {
+        val (s, r) = bounded<Int>(1)
+
+        val producer = launch {
+            assertSendOk(s.send(7))
+            val watcher = launch { s.closed() }
+            delay(500)
+            assertTrue(watcher.isActive)
+            delay(1000)
+            watcher.join()
+            assertFalse(watcher.isActive)
+            s.closed()
+        }
+        val consumer = launch {
+            assertRecvOk(r.recv(), 7)
+            delay(500)
+            r.close()
+        }
+        producer.join()
+        consumer.join()
     }
 
     @Test
