@@ -83,6 +83,17 @@ public class Sender<T> internal constructor(
     }
 
     /**
+     * Completes when the channel is closed.
+     *
+     * This allows the producers to get notified when interest in the produced values is
+     * canceled and immediately stop doing work. Dropping the last receiver closes the
+     * channel, so this also completes when all receivers have dropped.
+     */
+    public suspend fun closed() {
+        state.awaitClosed()
+    }
+
+    /**
      * Closes the channel.
      *
      * Returns `true` if this call has closed the channel and it was not closed already.
