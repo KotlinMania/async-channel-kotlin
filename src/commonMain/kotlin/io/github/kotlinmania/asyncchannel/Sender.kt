@@ -1,7 +1,9 @@
 // port-lint: source src/lib.rs
 package io.github.kotlinmania.asyncchannel
 
+import kotlin.concurrent.atomics.AtomicBoolean
 import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.selects.select
 
 /**
  * The sending side of a channel.
@@ -38,10 +40,24 @@ public class Sender<T> internal constructor(
      * If the channel is closed, this method returns [SendOutcome.Err] carrying [SendError].
      */
     public suspend fun send(msg: T): SendOutcome<T> {
+        if (state.isClosed) return SendOutcome.Err(SendError(msg))
         return try {
-            state.queue.send(msg)
-            state.incrementSize()
-            SendOutcome.Ok
+            // The underlying kotlinx Channel does not wake a suspended sender when
+            // close() is called while buffered items remain (the sender keeps
+            // waiting for a slot to open). Race the send against the channel's
+            // closed signal so a close from the receiver side immediately fails
+            // the suspended sender with SendError, matching the upstream Rust
+            // async-channel semantics where `Sender::send` resolves to
+            // `SendError` once the channel is closed.
+            select<SendOutcome<T>> {
+                state.queue.onSend(msg) {
+                    state.incrementSize()
+                    SendOutcome.Ok
+                }
+                state.closedSignal.onAwait {
+                    SendOutcome.Err(SendError(msg))
+                }
+            }
         } catch (_: ClosedSendChannelException) {
             SendOutcome.Err(SendError(msg))
         }
@@ -136,11 +152,29 @@ public class Sender<T> internal constructor(
         return Sender(state)
     }
 
+    /**
+     * Releases this [Sender]'s reference to the channel.
+     *
+     * Kotlin has no `Drop` analog, so the upstream `impl Drop for Sender` behavior
+     * is exposed explicitly: this method decrements the live sender count and
+     * closes the channel if no senders remain. Calling [release] more than once
+     * on the same handle is a no-op after the first call.
+     */
+    public fun release() {
+        if (released.compareAndSet(expectedValue = false, newValue = true)) {
+            if (state.senderCount.fetchAndAdd(-1) == 1) {
+                state.close()
+            }
+        }
+    }
+
     /** Downgrade the sender to a weak reference. */
     public fun downgrade(): WeakSender<T> = WeakSender(state)
 
     /** Returns whether the senders belong to the same channel. */
     public fun sameChannel(other: Sender<T>): Boolean = state === other.state
+
+    private val released: AtomicBoolean = AtomicBoolean(false)
 
     override fun toString(): String = "Sender { .. }"
 }

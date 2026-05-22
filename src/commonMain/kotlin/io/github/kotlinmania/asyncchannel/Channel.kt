@@ -20,7 +20,7 @@ internal class ChannelState<T>(
 ) {
     private val sizeCounter: AtomicInt = AtomicInt(0)
     private val closed: AtomicBoolean = AtomicBoolean(false)
-    private val closedSignal: CompletableDeferred<Unit> = CompletableDeferred()
+    internal val closedSignal: CompletableDeferred<Unit> = CompletableDeferred()
 
     /** Number of currently active senders. */
     val senderCount: AtomicInt = AtomicInt(1)

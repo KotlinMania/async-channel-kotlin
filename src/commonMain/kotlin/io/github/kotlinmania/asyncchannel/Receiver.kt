@@ -1,7 +1,10 @@
 // port-lint: source src/lib.rs
 package io.github.kotlinmania.asyncchannel
 
+import kotlin.concurrent.atomics.AtomicBoolean
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 /**
  * The receiving side of a channel.
@@ -49,6 +52,34 @@ public class Receiver<T> internal constructor(
     }
 
     /**
+     * Returns the next message from the channel, or `null` if the channel is closed
+     * and drained.
+     *
+     * Mirrors the upstream `impl Stream for Receiver` whose `poll_next` yields
+     * `Some(item)` on a value and `None` once the channel is closed and drained.
+     * This is the suspend equivalent of `Stream::next()`.
+     */
+    public suspend fun next(): T? = when (val outcome = recv()) {
+        is RecvOutcome.Ok -> outcome.value
+        is RecvOutcome.Err -> null
+    }
+
+    /**
+     * Returns a cold [Flow] that emits every message from the channel and completes
+     * when the channel is closed and drained.
+     *
+     * Mirrors `impl Stream for Receiver` in upstream Rust: each collect drains the
+     * shared channel through this receiver handle. Collecting from multiple flows
+     * over the same receiver shares the channel's MPMC semantics.
+     */
+    public fun asFlow(): Flow<T> = flow {
+        while (true) {
+            val item = next() ?: return@flow
+            emit(item)
+        }
+    }
+
+    /**
      * Closes the channel.
      *
      * Returns `true` if this call has closed the channel and it was not closed already.
@@ -91,11 +122,29 @@ public class Receiver<T> internal constructor(
         return Receiver(state)
     }
 
+    /**
+     * Releases this [Receiver]'s reference to the channel.
+     *
+     * Kotlin has no `Drop` analog, so the upstream `impl Drop for Receiver`
+     * behavior is exposed explicitly: this method decrements the live receiver
+     * count and closes the channel if no receivers remain. Calling [release]
+     * more than once on the same handle is a no-op after the first call.
+     */
+    public fun release() {
+        if (released.compareAndSet(expectedValue = false, newValue = true)) {
+            if (state.receiverCount.fetchAndAdd(-1) == 1) {
+                state.close()
+            }
+        }
+    }
+
     /** Downgrade the receiver to a weak reference. */
     public fun downgrade(): WeakReceiver<T> = WeakReceiver(state)
 
     /** Returns whether the receivers belong to the same channel. */
     public fun sameChannel(other: Receiver<T>): Boolean = state === other.state
+
+    private val released: AtomicBoolean = AtomicBoolean(false)
 
     override fun toString(): String = "Receiver { .. }"
 }

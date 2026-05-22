@@ -12,6 +12,24 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
+// Two upstream tests at the forget-blocked-sender and forget-blocked-receiver
+// positions in bounded tests pin a send or recv future, poll it exactly once,
+// then keep the pinned future alive on the stack for 500 ms while other
+// parallel tasks drive the channel. Under that model, an opening slot wakes
+// the pinned future's waker but no executor polls it again, so the slot
+// stays free for other senders or receivers. kotlinx.coroutines Channel does
+// not separate "signal ready" from "transfer the value": when a waiter
+// exists and a slot opens, the value is handed to the waiter's continuation,
+// which then resumes. There is no equivalent of "polled once, kept alive in
+// the wait list, never repolled". Faithfully porting those two upstream
+// tests would require either a custom Kotlin channel implementation that
+// exposes the upstream poll model or a different test that no longer
+// exercises the upstream invariant. Both options break the translation rule
+// that says don't invent a different test, so the two upstream tests are
+// intentionally unported. The duration helper from the upstream bounded
+// tests is unused on the Kotlin side because the only upstream callers are
+// those two unported tests.
+
 private fun assertSendOk(outcome: SendOutcome<*>) {
     assertSame(SendOutcome.Ok, outcome)
 }
@@ -306,7 +324,11 @@ class BoundedTest {
 
         assertEquals(21, s.receiverCount())
         assertEquals(21, r.receiverCount())
-        assertEquals(20, receiverClones.size)
+
+        receiverClones.forEach { it.release() }
+
+        assertEquals(1, s.receiverCount())
+        assertEquals(1, r.receiverCount())
     }
 
     @Test
@@ -316,20 +338,42 @@ class BoundedTest {
 
         assertEquals(21, s.senderCount())
         assertEquals(21, r.senderCount())
-        assertEquals(20, senderClones.size)
+
+        senderClones.forEach { it.release() }
+
+        assertEquals(1, s.senderCount())
+        assertEquals(1, r.senderCount())
+    }
+
+    @Test
+    fun closeWakesSender() = runTest {
+        val (s, r) = bounded<Unit>(1)
+
+        val producer = launch {
+            assertSendOk(s.send(Unit))
+            assertSendErr(s.send(Unit), Unit)
+        }
+        val closer = launch {
+            delay(1000)
+            r.release()
+        }
+        producer.join()
+        closer.join()
     }
 
     @Test
     fun closeWakesReceiver() = runTest {
         val (s, r) = bounded<Unit>(1)
 
-        launch {
+        val consumer = launch {
             assertSame(RecvOutcome.Err, r.recv())
         }
-        launch {
+        val closer = launch {
             delay(1000)
-            s.close()
+            s.release()
         }
+        consumer.join()
+        closer.join()
     }
 
     @Test
@@ -367,6 +411,37 @@ class BoundedTest {
                 for (i in 0 until count) {
                     val ok = r.recv() as RecvOutcome.Ok<Int>
                     seen[ok.value] += 1
+                }
+            }
+        }
+        val producers = List(workers) {
+            async {
+                for (i in 0 until count) {
+                    assertSendOk(s.send(i))
+                }
+            }
+        }
+        producers.forEach { it.await() }
+        consumers.forEach { it.await() }
+
+        for (value in seen) {
+            assertEquals(workers, value)
+        }
+    }
+
+    @Test
+    fun mpmcStream() = runTest {
+        val count = 25_000
+        val workers = 4
+
+        val (s, r) = bounded<Int>(3)
+        val seen = IntArray(count)
+
+        val consumers = List(workers) {
+            async {
+                for (i in 0 until count) {
+                    val value = r.next() ?: error("unexpected end of stream")
+                    seen[value] += 1
                 }
             }
         }
