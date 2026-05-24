@@ -289,6 +289,40 @@ class UnboundedTest {
     }
 
     @Test
+    fun mpmcStream() = runTest {
+        val count = 25_000
+        val threads = 4
+
+        val (s, r) = unbounded<Int>()
+        val v = IntArray(count)
+
+        val consumers = List(threads) {
+            val receiver = r.clone()
+            async {
+                for (i in 0 until count) {
+                    val value = receiver.next() ?: error("unexpected end of stream")
+                    v[value] += 1
+                }
+            }
+        }
+        val producers = List(threads) {
+            async {
+                for (i in 0 until count) {
+                    assertSendOk(s.send(i))
+                }
+            }
+        }
+        producers.forEach { it.await() }
+        consumers.forEach { it.await() }
+
+        assertTryRecvErr(r.tryRecv(), TryRecvError.Empty)
+
+        for (c in v) {
+            assertEquals(threads, c)
+        }
+    }
+
+    @Test
     fun weak() = runTest {
         val (s, r) = unbounded<Int>()
 
