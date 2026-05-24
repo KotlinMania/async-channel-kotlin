@@ -209,10 +209,18 @@ kotlin {
         binaries.framework { baseName = "AsyncChannel"; xcf.add(this) }
     }
     iosSimulatorArm64 {
-        binaries.framework { baseName = "AsyncChannel"; xcf.add(this) }
+        binaries.framework {
+            baseName = "AsyncChannel"
+            isStatic = true
+            xcf.add(this)
+        }
     }
     iosX64 {
-        binaries.framework { baseName = "AsyncChannel"; xcf.add(this) }
+        binaries.framework {
+            baseName = "AsyncChannel"
+            isStatic = true
+            xcf.add(this)
+        }
     }
 
     tvosArm64 {
