@@ -1,4 +1,5 @@
 {
+  "parity_mode": false,
   "name": "async-channel-kotlin",
   "source": {
     "path": "tmp/async-channel/src",
