@@ -1,4 +1,4 @@
-// port-lint: source src/lib.rs
+// port-lint: source lib.rs
 package io.github.kotlinmania.asyncchannel
 
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -46,9 +46,7 @@ public class Sender<T> internal constructor(
             // close() is called while buffered items remain (the sender keeps
             // waiting for a slot to open). Race the send against the channel's
             // closed signal so a close from the receiver side immediately fails
-            // the suspended sender with SendError, matching the upstream Rust
-            // async-channel semantics where `Sender::send` resolves to
-            // `SendError` once the channel is closed.
+            // the suspended sender with [SendError].
             select<SendOutcome<T>> {
                 state.queue.onSend(msg) {
                     state.incrementSize()
@@ -155,10 +153,9 @@ public class Sender<T> internal constructor(
     /**
      * Releases this [Sender]'s reference to the channel.
      *
-     * Kotlin has no `Drop` analog, so the upstream `impl Drop for Sender` behavior
-     * is exposed explicitly: this method decrements the live sender count and
-     * closes the channel if no senders remain. Calling [release] more than once
-     * on the same handle is a no-op after the first call.
+     * Decrements the live sender count and closes the channel if no senders
+     * remain. Calling [release] more than once on the same handle is a no-op
+     * after the first call.
      */
     public fun release() {
         if (released.compareAndSet(expectedValue = false, newValue = true)) {
@@ -204,8 +201,8 @@ public class WeakSender<T> internal constructor(
 /**
  * Result of [Sender.send].
  *
- * Mirrors the upstream `Result<(), SendError<T>>` since [SendError] is generic
- * and Kotlin does not allow generic subclasses of [Throwable].
+ * Kept as a sealed interface rather than a [kotlin.Result] because [SendError]
+ * is generic and Kotlin does not allow generic subclasses of [Throwable].
  */
 public sealed interface SendOutcome<out T> {
     /** Successfully sent. */
@@ -217,8 +214,6 @@ public sealed interface SendOutcome<out T> {
 
 /**
  * Result of [Sender.forceSend].
- *
- * Mirrors the upstream `Result<Option<T>, SendError<T>>`.
  */
 public sealed interface ForceSendOutcome<out T> {
     /** Successfully sent, optionally carrying the replaced message. */

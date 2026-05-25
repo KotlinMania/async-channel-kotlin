@@ -1,4 +1,4 @@
-// port-lint: source src/lib.rs
+// port-lint: source lib.rs
 package io.github.kotlinmania.asyncchannel
 
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -54,10 +54,6 @@ public class Receiver<T> internal constructor(
     /**
      * Returns the next message from the channel, or `null` if the channel is closed
      * and drained.
-     *
-     * Mirrors the upstream `impl Stream for Receiver` whose `poll_next` yields
-     * `Some(item)` on a value and `None` once the channel is closed and drained.
-     * This is the suspend equivalent of `Stream::next()`.
      */
     public suspend fun next(): T? = when (val outcome = recv()) {
         is RecvOutcome.Ok -> outcome.value
@@ -68,9 +64,8 @@ public class Receiver<T> internal constructor(
      * Returns a cold [Flow] that emits every message from the channel and completes
      * when the channel is closed and drained.
      *
-     * Mirrors `impl Stream for Receiver` in upstream Rust: each collect drains the
-     * shared channel through this receiver handle. Collecting from multiple flows
-     * over the same receiver shares the channel's MPMC semantics.
+     * Each collect drains the shared channel through this receiver handle. Multiple
+     * collectors over the same receiver share the channel's MPMC semantics.
      */
     public fun asFlow(): Flow<T> = flow {
         while (true) {
@@ -125,10 +120,9 @@ public class Receiver<T> internal constructor(
     /**
      * Releases this [Receiver]'s reference to the channel.
      *
-     * Kotlin has no `Drop` analog, so the upstream `impl Drop for Receiver`
-     * behavior is exposed explicitly: this method decrements the live receiver
-     * count and closes the channel if no receivers remain. Calling [release]
-     * more than once on the same handle is a no-op after the first call.
+     * Decrements the live receiver count and closes the channel if no receivers
+     * remain. Calling [release] more than once on the same handle is a no-op
+     * after the first call.
      */
     public fun release() {
         if (released.compareAndSet(expectedValue = false, newValue = true)) {
@@ -173,9 +167,6 @@ public class WeakReceiver<T> internal constructor(
 
 /**
  * Result of [Receiver.recv].
- *
- * Mirrors the upstream `Result<T, RecvError>`. Kept as a sealed interface (rather
- * than a [kotlin.Result]) so the failure variant matches [SendOutcome] symmetry.
  */
 public sealed interface RecvOutcome<out T> {
     /** Successfully received a message. */
@@ -187,9 +178,6 @@ public sealed interface RecvOutcome<out T> {
 
 /**
  * Result of [Receiver.tryRecv].
- *
- * Mirrors the upstream `Result<T, TryRecvError>` since [TryRecvError] is a
- * Kotlin enum and cannot extend [Throwable] for use with [kotlin.Result].
  */
 public sealed interface TryRecvOutcome<out T> {
     /** Successfully received a message. */
