@@ -1,4 +1,3 @@
-// port-lint: ignore
 // Smoke tests for bounded/unbounded channels backed by kotlinx.coroutines.
 package io.github.kotlinmania.asyncchannel
 

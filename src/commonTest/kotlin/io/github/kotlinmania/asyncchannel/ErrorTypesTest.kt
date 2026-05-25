@@ -1,4 +1,3 @@
-// port-lint: ignore
 // Tests for the four error types: SendError, TrySendError, RecvError, TryRecvError.
 package io.github.kotlinmania.asyncchannel
 
