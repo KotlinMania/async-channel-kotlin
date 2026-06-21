@@ -86,78 +86,85 @@ class TrySendTryRecvTest {
 
 class SendRecvSuspendTest {
     @Test
-    fun sendThenRecv() = runTest {
-        val (s, r) = unbounded<String>()
-        assertSame(SendOutcome.Ok, s.send("Hello"))
-        val received = r.recv()
-        assertIs<RecvOutcome.Ok<String>>(received)
-        assertEquals("Hello", received.value)
-    }
+    fun sendThenRecv() =
+        runTest {
+            val (s, r) = unbounded<String>()
+            assertSame(SendOutcome.Ok, s.send("Hello"))
+            val received = r.recv()
+            assertIs<RecvOutcome.Ok<String>>(received)
+            assertEquals("Hello", received.value)
+        }
 
     @Test
-    fun sendOnClosedReturnsSendError() = runTest {
-        val (s, _) = unbounded<Int>()
-        s.close()
-        val outcome = s.send(42)
-        assertIs<SendOutcome.Err<Int>>(outcome)
-        assertEquals(42, outcome.error.value)
-    }
+    fun sendOnClosedReturnsSendError() =
+        runTest {
+            val (s, _) = unbounded<Int>()
+            s.close()
+            val outcome = s.send(42)
+            assertIs<SendOutcome.Err<Int>>(outcome)
+            assertEquals(42, outcome.error.value)
+        }
 
     @Test
-    fun recvOnClosedDrainedReturnsRecvError() = runTest {
-        val (s, r) = unbounded<Int>()
-        s.send(1)
-        s.close()
-        val drained = r.recv()
-        assertIs<RecvOutcome.Ok<Int>>(drained)
-        assertEquals(1, drained.value)
-        assertSame(RecvOutcome.Err, r.recv())
-    }
+    fun recvOnClosedDrainedReturnsRecvError() =
+        runTest {
+            val (s, r) = unbounded<Int>()
+            s.send(1)
+            s.close()
+            val drained = r.recv()
+            assertIs<RecvOutcome.Ok<Int>>(drained)
+            assertEquals(1, drained.value)
+            assertSame(RecvOutcome.Err, r.recv())
+        }
 
     @Test
-    fun sendReceiveAcrossMultipleClones() = runTest {
-        val (s, r) = unbounded<Int>()
-        val s2 = s.clone()
-        s.send(1)
-        s2.send(2)
-        val first = (r.recv() as RecvOutcome.Ok<Int>).value
-        val second = (r.recv() as RecvOutcome.Ok<Int>).value
-        assertEquals(setOf(1, 2), setOf(first, second))
-        assertEquals(2, s.senderCount())
-    }
+    fun sendReceiveAcrossMultipleClones() =
+        runTest {
+            val (s, r) = unbounded<Int>()
+            val s2 = s.clone()
+            s.send(1)
+            s2.send(2)
+            val first = (r.recv() as RecvOutcome.Ok<Int>).value
+            val second = (r.recv() as RecvOutcome.Ok<Int>).value
+            assertEquals(setOf(1, 2), setOf(first, second))
+            assertEquals(2, s.senderCount())
+        }
 }
 
 class ChannelMetricsTest {
     @Test
-    fun lenTracksBufferedMessages() = runTest {
-        val (s, r) = unbounded<Int>()
-        assertEquals(0, s.len())
-        assertTrue(s.isEmpty())
-        s.send(1)
-        s.send(2)
-        assertEquals(2, s.len())
-        assertEquals(2, r.len())
-        assertFalse(r.isEmpty())
-        r.recv()
-        assertEquals(1, r.len())
-    }
+    fun lenTracksBufferedMessages() =
+        runTest {
+            val (s, r) = unbounded<Int>()
+            assertEquals(0, s.len())
+            assertTrue(s.isEmpty())
+            s.send(1)
+            s.send(2)
+            assertEquals(2, s.len())
+            assertEquals(2, r.len())
+            assertFalse(r.isEmpty())
+            r.recv()
+            assertEquals(1, r.len())
+        }
 
     @Test
-    fun isFullForBounded() = runTest {
-        val (s, _) = bounded<Int>(1)
-        assertFalse(s.isFull())
-        s.send(1)
-        assertTrue(s.isFull())
-    }
+    fun isFullForBounded() =
+        runTest {
+            val (s, _) = bounded<Int>(1)
+            assertFalse(s.isFull())
+            s.send(1)
+            assertTrue(s.isFull())
+        }
 
     @Test
-    fun unboundedIsNeverFull() = runTest {
-        val (s, _) = unbounded<Int>()
-        s.send(1)
-        s.send(2)
-        s.send(3)
-        assertFalse(s.isFull())
-    }
+    fun unboundedIsNeverFull() =
+        runTest {
+            val (s, _) = unbounded<Int>()
+            s.send(1)
+            s.send(2)
+            s.send(3)
+            assertFalse(s.isFull())
+        }
 }
 
 class WeakReferencesTest {

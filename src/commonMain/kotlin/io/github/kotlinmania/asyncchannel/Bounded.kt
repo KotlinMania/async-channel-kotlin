@@ -13,10 +13,11 @@ import kotlinx.coroutines.channels.Channel as KxChannel
  */
 public fun <T> bounded(cap: Int): Pair<Sender<T>, Receiver<T>> {
     require(cap > 0) { "capacity cannot be zero" }
-    val state = ChannelState<T>(
-        queue = KxChannel(capacity = cap),
-        cap = cap,
-    )
+    val state =
+        ChannelState<T>(
+            queue = KxChannel(capacity = cap),
+            cap = cap,
+        )
     return Sender(state) to Receiver(state)
 }
 
@@ -26,9 +27,10 @@ public fun <T> bounded(cap: Int): Pair<Sender<T>, Receiver<T>> {
  * The created channel can hold an unlimited number of messages.
  */
 public fun <T> unbounded(): Pair<Sender<T>, Receiver<T>> {
-    val state = ChannelState<T>(
-        queue = KxChannel(capacity = KxChannel.UNLIMITED),
-        cap = null,
-    )
+    val state =
+        ChannelState<T>(
+            queue = KxChannel(capacity = KxChannel.UNLIMITED),
+            cap = null,
+        )
     return Sender(state) to Receiver(state)
 }
