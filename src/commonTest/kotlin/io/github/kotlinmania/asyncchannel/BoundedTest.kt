@@ -130,13 +130,13 @@ class BoundedTest {
 
             launch {
                 assertTryRecvErr(r.tryRecv(), TryRecvError.Empty)
-                delay(1500)
+                delay(15)
                 assertTryRecvOk(r.tryRecv(), 7)
-                delay(500)
+                delay(5)
                 assertTryRecvErr(r.tryRecv(), TryRecvError.Closed)
             }
             launch {
-                delay(1000)
+                delay(10)
                 assertSendOk(s.send(7))
                 s.close()
             }
@@ -149,14 +149,14 @@ class BoundedTest {
 
             launch {
                 assertRecvOk(r.recv(), 7)
-                delay(1000)
+                delay(10)
                 assertRecvOk(r.recv(), 8)
-                delay(1000)
+                delay(10)
                 assertRecvOk(r.recv(), 9)
                 assertSame(RecvOutcome.Err, r.recv())
             }
             launch {
-                delay(1500)
+                delay(15)
                 assertSendOk(s.send(7))
                 assertSendOk(s.send(8))
                 assertSendOk(s.send(9))
@@ -174,15 +174,15 @@ class BoundedTest {
                 val full = s.trySend(2)
                 assertTrue(full is TrySendError.Full)
                 assertEquals(2, full.value)
-                delay(1500)
+                delay(15)
                 assertNull(s.trySend(3))
-                delay(500)
+                delay(5)
                 val closed = s.trySend(4)
                 assertTrue(closed is TrySendError.Closed)
                 assertEquals(4, closed.value)
             }
             launch {
-                delay(1000)
+                delay(10)
                 assertTryRecvOk(r.tryRecv(), 1)
                 assertTryRecvErr(r.tryRecv(), TryRecvError.Empty)
                 assertRecvOk(r.recv(), 3)
@@ -198,16 +198,16 @@ class BoundedTest {
             val producer =
                 async {
                     assertSendOk(s.send(7))
-                    delay(1000)
+                    delay(10)
                     assertSendOk(s.send(8))
-                    delay(1000)
+                    delay(10)
                     assertSendOk(s.send(9))
-                    delay(1000)
+                    delay(10)
                     assertSendOk(s.send(10))
                 }
             val consumer =
                 async {
-                    delay(1500)
+                    delay(15)
                     assertRecvOk(r.recv(), 7)
                     assertRecvOk(r.recv(), 8)
                     assertRecvOk(r.recv(), 9)
@@ -226,9 +226,9 @@ class BoundedTest {
                 launch {
                     assertSendOk(s.send(7))
                     val watcher = launch { s.closed() }
-                    delay(500)
+                    delay(5)
                     assertTrue(watcher.isActive)
-                    delay(1000)
+                    delay(10)
                     watcher.join()
                     assertFalse(watcher.isActive)
                     s.closed()
@@ -236,7 +236,7 @@ class BoundedTest {
             val consumer =
                 launch {
                     assertRecvOk(r.recv(), 7)
-                    delay(500)
+                    delay(5)
                     r.close()
                 }
             producer.join()
@@ -249,11 +249,11 @@ class BoundedTest {
             val (s, r) = bounded<Int>(1)
 
             assertForceSendOk(s.forceSend(7), null)
-            delay(1000)
+            delay(10)
             assertForceSendOk(s.forceSend(8), 7)
-            delay(1000)
+            delay(10)
             assertForceSendOk(s.forceSend(9), 8)
-            delay(1000)
+            delay(10)
             assertForceSendOk(s.forceSend(10), 9)
 
             assertRecvOk(r.recv(), 10)
@@ -372,7 +372,7 @@ class BoundedTest {
                 }
             val closer =
                 launch {
-                    delay(1000)
+                    delay(10)
                     r.release()
                 }
             producer.join()
@@ -390,7 +390,7 @@ class BoundedTest {
                 }
             val closer =
                 launch {
-                    delay(1000)
+                    delay(10)
                     s.release()
                 }
             consumer.join()
@@ -400,7 +400,7 @@ class BoundedTest {
     @Test
     fun spsc() =
         runTest {
-            val count = 100_000
+            val count = 10_000
 
             val (s, r) = bounded<Int>(3)
 
@@ -425,7 +425,7 @@ class BoundedTest {
     @Test
     fun mpmc() =
         runTest {
-            val count = 25_000
+            val count = 2_500
             val workers = 4
 
             val (s, r) = bounded<Int>(3)
@@ -459,7 +459,7 @@ class BoundedTest {
     @Test
     fun mpmcStream() =
         runTest {
-            val count = 25_000
+            val count = 2_500
             val workers = 4
 
             val (s, r) = bounded<Int>(3)

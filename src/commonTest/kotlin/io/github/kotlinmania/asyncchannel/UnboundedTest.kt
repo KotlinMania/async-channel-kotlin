@@ -89,13 +89,13 @@ class UnboundedTest {
 
             launch {
                 assertTryRecvErr(r.tryRecv(), TryRecvError.Empty)
-                delay(1500)
+                delay(15)
                 assertTryRecvOk(r.tryRecv(), 7)
-                delay(500)
+                delay(5)
                 assertTryRecvErr(r.tryRecv(), TryRecvError.Closed)
             }
             launch {
-                delay(1000)
+                delay(10)
                 assertSendOk(s.send(7))
                 s.close()
             }
@@ -108,14 +108,14 @@ class UnboundedTest {
 
             launch {
                 assertRecvOk(r.recv(), 7)
-                delay(1000)
+                delay(10)
                 assertRecvOk(r.recv(), 8)
-                delay(1000)
+                delay(10)
                 assertRecvOk(r.recv(), 9)
                 assertSame(RecvOutcome.Err, r.recv())
             }
             launch {
-                delay(1500)
+                delay(15)
                 assertSendOk(s.send(7))
                 assertSendOk(s.send(8))
                 assertSendOk(s.send(9))
@@ -237,7 +237,7 @@ class UnboundedTest {
                 assertSame(RecvOutcome.Err, r.recv())
             }
             launch {
-                delay(1000)
+                delay(10)
                 s.close()
             }
         }
