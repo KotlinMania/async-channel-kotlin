@@ -35,3 +35,7 @@ async-channel-commonMain = [
   "kotlinx-datetime",
   "collections-immutable",
 ]
+async-channel-commonTest = [
+  "kotlinx-coroutines-test",
+]
+
