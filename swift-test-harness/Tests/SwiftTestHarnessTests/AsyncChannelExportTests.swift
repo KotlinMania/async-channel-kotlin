@@ -1,9 +1,11 @@
+import Testing
 import AsyncChannel
 
-@main
-struct AsyncChannelExportTests {
-    static func main() {
-        print("AsyncChannel swift module imported cleanly")
+@Suite struct AsyncChannelExportTests {
+    @Test func testSwiftModuleLoads() throws {
+        let pair = unbounded()
+        #expect(pair.first != nil)
     }
 }
+
 
