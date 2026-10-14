@@ -1,6 +1,9 @@
 // Smoke tests for bounded/unbounded channels backed by kotlinx.coroutines.
 package io.github.kotlinmania.asyncchannel
 
+import io.github.kotlinmania.futures.Poll
+import io.github.kotlinmania.futures.TaskContext
+import io.github.kotlinmania.futures.Yield
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -200,5 +203,38 @@ class WeakReferencesTest {
         val weak = r.downgrade()
         s.close()
         assertNull(weak.upgrade())
+    }
+}
+
+class ReceiverStreamTest {
+    @Test
+    fun streamPollNextReceivesMessages() {
+        val (s, r) = unbounded<Int>()
+        val cx = TaskContext()
+        assertFalse(r.isTerminated())
+        assertEquals(Poll.Pending, r.pollNext(cx))
+
+        s.trySend(42)
+        val poll1 = r.pollNext(cx)
+        assertIs<Poll.Ready<Yield<Int>>>(poll1)
+        val yield1 = poll1.value
+        assertIs<Yield.Value<Int>>(yield1)
+        assertEquals(42, yield1.value)
+
+        s.close()
+        val poll2 = r.pollNext(cx)
+        assertIs<Poll.Ready<Yield<Int>>>(poll2)
+        assertEquals(Yield.End, poll2.value)
+        assertTrue(r.isTerminated())
+    }
+
+    @Test
+    fun streamSizeHint() {
+        val (s, r) = bounded<Int>(10)
+        assertEquals(0, r.sizeHint().lower)
+        assertEquals(10, r.sizeHint().upper)
+        s.trySend(1)
+        assertEquals(1, r.sizeHint().lower)
+        assertEquals(10, r.sizeHint().upper)
     }
 }

@@ -1,6 +1,8 @@
-// port-lint: source lib.rs
+@file:OptIn(kotlin.experimental.ExperimentalObjCRefinement::class)
+
 package io.github.kotlinmania.asyncchannel
 
+import kotlin.native.HiddenFromObjC
 import kotlinx.coroutines.channels.Channel as KxChannel
 
 /**
@@ -11,6 +13,7 @@ import kotlinx.coroutines.channels.Channel as KxChannel
  * Capacity must be a positive number; this function will throw
  * [IllegalArgumentException] if [cap] is zero.
  */
+@HiddenFromObjC
 public fun <T> bounded(cap: Int): Pair<Sender<T>, Receiver<T>> {
     require(cap > 0) { "capacity cannot be zero" }
     val state =
@@ -26,6 +29,7 @@ public fun <T> bounded(cap: Int): Pair<Sender<T>, Receiver<T>> {
  *
  * The created channel can hold an unlimited number of messages.
  */
+@HiddenFromObjC
 public fun <T> unbounded(): Pair<Sender<T>, Receiver<T>> {
     val state =
         ChannelState<T>(
