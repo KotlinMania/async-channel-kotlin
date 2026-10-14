@@ -1,10 +1,17 @@
-// port-lint: source lib.rs
+@file:OptIn(kotlin.experimental.ExperimentalObjCRefinement::class)
+
 package io.github.kotlinmania.asyncchannel
 
-import kotlin.concurrent.atomics.AtomicBoolean
+import io.github.kotlinmania.futures.FusedStream
+import io.github.kotlinmania.futures.Poll
+import io.github.kotlinmania.futures.SizeHint
+import io.github.kotlinmania.futures.TaskContext
+import io.github.kotlinmania.futures.Yield
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.native.HiddenFromObjC
 
 /**
  * The receiving side of a channel.
@@ -13,9 +20,10 @@ import kotlinx.coroutines.flow.flow
  * receivers are gone or the channel is closed via [close], no more messages can
  * be sent. Buffered messages are drained on receive even after close.
  */
+@HiddenFromObjC
 public class Receiver<T> internal constructor(
     internal val state: ChannelState<T>,
-) {
+) : FusedStream<T> {
     /**
      * Attempts to receive a message from the channel.
      *
@@ -41,24 +49,24 @@ public class Receiver<T> internal constructor(
      * If the channel is empty, suspends until there is a message.
      * If the channel is closed and drained, returns [RecvOutcome.Err] carrying [RecvError].
      */
-    public suspend fun recv(): RecvOutcome<T> {
-        return try {
+    public suspend fun recv(): RecvOutcome<T> =
+        try {
             val value = state.queue.receive()
             state.decrementSize()
             RecvOutcome.Ok(value)
         } catch (_: ClosedReceiveChannelException) {
             RecvOutcome.Err
         }
-    }
 
     /**
      * Returns the next message from the channel, or `null` if the channel is closed
      * and drained.
      */
-    public suspend fun next(): T? = when (val outcome = recv()) {
-        is RecvOutcome.Ok -> outcome.value
-        is RecvOutcome.Err -> null
-    }
+    public suspend fun next(): T? =
+        when (val outcome = recv()) {
+            is RecvOutcome.Ok -> outcome.value
+            is RecvOutcome.Err -> null
+        }
 
     /**
      * Returns a cold [Flow] that emits every message from the channel and completes
@@ -67,12 +75,13 @@ public class Receiver<T> internal constructor(
      * Each collect drains the shared channel through this receiver handle. Multiple
      * collectors over the same receiver share the channel's MPMC semantics.
      */
-    public fun asFlow(): Flow<T> = flow {
-        while (true) {
-            val item = next() ?: return@flow
-            emit(item)
+    public fun asFlow(): Flow<T> =
+        flow {
+            while (true) {
+                val item = next() ?: return@flow
+                emit(item)
+            }
         }
-    }
 
     /**
      * Closes the channel.
@@ -138,6 +147,21 @@ public class Receiver<T> internal constructor(
     /** Returns whether the receivers belong to the same channel. */
     public fun sameChannel(other: Receiver<T>): Boolean = state === other.state
 
+    override fun pollNext(context: TaskContext): Poll<Yield<T>> =
+        when (val outcome = tryRecv()) {
+            is TryRecvOutcome.Ok -> Poll.Ready(Yield.Value(outcome.value))
+            is TryRecvOutcome.Err -> {
+                when (outcome.error) {
+                    TryRecvError.Closed -> Poll.Ready(Yield.End)
+                    TryRecvError.Empty -> Poll.Pending
+                }
+            }
+        }
+
+    override fun isTerminated(): Boolean = state.isClosed && state.size == 0
+
+    override fun sizeHint(): SizeHint = SizeHint(state.size, state.cap)
+
     private val released: AtomicBoolean = AtomicBoolean(false)
 
     override fun toString(): String = "Receiver { .. }"
@@ -148,6 +172,7 @@ public class Receiver<T> internal constructor(
  *
  * Created through [Receiver.downgrade]. Use [upgrade] to get a strong [Receiver] back.
  */
+@HiddenFromObjC
 public class WeakReceiver<T> internal constructor(
     private val state: ChannelState<T>,
 ) {
@@ -170,7 +195,9 @@ public class WeakReceiver<T> internal constructor(
  */
 public sealed interface RecvOutcome<out T> {
     /** Successfully received a message. */
-    public data class Ok<T>(public val value: T) : RecvOutcome<T>
+    public data class Ok<T>(
+        public val value: T,
+    ) : RecvOutcome<T>
 
     /** Failed because the channel was empty and closed. */
     public data object Err : RecvOutcome<Nothing>
@@ -181,8 +208,12 @@ public sealed interface RecvOutcome<out T> {
  */
 public sealed interface TryRecvOutcome<out T> {
     /** Successfully received a message. */
-    public data class Ok<T>(public val value: T) : TryRecvOutcome<T>
+    public data class Ok<T>(
+        public val value: T,
+    ) : TryRecvOutcome<T>
 
     /** Failed to receive a message; carries the reason. */
-    public data class Err(public val error: TryRecvError) : TryRecvOutcome<Nothing>
+    public data class Err(
+        public val error: TryRecvError,
+    ) : TryRecvOutcome<Nothing>
 }

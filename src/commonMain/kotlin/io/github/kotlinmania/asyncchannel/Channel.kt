@@ -1,9 +1,9 @@
 // port-lint: source lib.rs
 package io.github.kotlinmania.asyncchannel
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel as KxChannel
 
 /**

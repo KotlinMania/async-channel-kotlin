@@ -1,9 +1,9 @@
 // port-lint: source lib.rs
 package io.github.kotlinmania.asyncchannel
 
-import kotlin.concurrent.atomics.AtomicBoolean
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.selects.select
+import kotlin.concurrent.atomics.AtomicBoolean
 
 /**
  * The sending side of a channel.
@@ -209,7 +209,9 @@ public sealed interface SendOutcome<out T> {
     public data object Ok : SendOutcome<Nothing>
 
     /** Failed to send because the channel was closed. */
-    public data class Err<T>(public val error: SendError<T>) : SendOutcome<T>
+    public data class Err<T>(
+        public val error: SendError<T>,
+    ) : SendOutcome<T>
 }
 
 /**
@@ -217,8 +219,12 @@ public sealed interface SendOutcome<out T> {
  */
 public sealed interface ForceSendOutcome<out T> {
     /** Successfully sent, optionally carrying the replaced message. */
-    public data class Ok<T>(public val replaced: T?) : ForceSendOutcome<T>
+    public data class Ok<T>(
+        public val replaced: T?,
+    ) : ForceSendOutcome<T>
 
     /** Failed to send because the channel was closed. */
-    public data class Err<T>(public val error: SendError<T>) : ForceSendOutcome<T>
+    public data class Err<T>(
+        public val error: SendError<T>,
+    ) : ForceSendOutcome<T>
 }

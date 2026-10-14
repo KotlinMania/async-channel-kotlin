@@ -6,7 +6,9 @@ package io.github.kotlinmania.asyncchannel
  *
  * Received because the channel is closed.
  */
-public class SendError<T>(public val value: T) {
+public class SendError<T>(
+    public val value: T,
+) {
     /** Unwraps the message that couldn't be sent. */
     public fun intoInner(): T = value
 

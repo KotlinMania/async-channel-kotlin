@@ -1,6 +1,9 @@
 // Smoke tests for bounded/unbounded channels backed by kotlinx.coroutines.
 package io.github.kotlinmania.asyncchannel
 
+import io.github.kotlinmania.futures.Poll
+import io.github.kotlinmania.futures.TaskContext
+import io.github.kotlinmania.futures.Yield
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -86,78 +89,85 @@ class TrySendTryRecvTest {
 
 class SendRecvSuspendTest {
     @Test
-    fun sendThenRecv() = runTest {
-        val (s, r) = unbounded<String>()
-        assertSame(SendOutcome.Ok, s.send("Hello"))
-        val received = r.recv()
-        assertIs<RecvOutcome.Ok<String>>(received)
-        assertEquals("Hello", received.value)
-    }
+    fun sendThenRecv() =
+        runTest {
+            val (s, r) = unbounded<String>()
+            assertSame(SendOutcome.Ok, s.send("Hello"))
+            val received = r.recv()
+            assertIs<RecvOutcome.Ok<String>>(received)
+            assertEquals("Hello", received.value)
+        }
 
     @Test
-    fun sendOnClosedReturnsSendError() = runTest {
-        val (s, _) = unbounded<Int>()
-        s.close()
-        val outcome = s.send(42)
-        assertIs<SendOutcome.Err<Int>>(outcome)
-        assertEquals(42, outcome.error.value)
-    }
+    fun sendOnClosedReturnsSendError() =
+        runTest {
+            val (s, _) = unbounded<Int>()
+            s.close()
+            val outcome = s.send(42)
+            assertIs<SendOutcome.Err<Int>>(outcome)
+            assertEquals(42, outcome.error.value)
+        }
 
     @Test
-    fun recvOnClosedDrainedReturnsRecvError() = runTest {
-        val (s, r) = unbounded<Int>()
-        s.send(1)
-        s.close()
-        val drained = r.recv()
-        assertIs<RecvOutcome.Ok<Int>>(drained)
-        assertEquals(1, drained.value)
-        assertSame(RecvOutcome.Err, r.recv())
-    }
+    fun recvOnClosedDrainedReturnsRecvError() =
+        runTest {
+            val (s, r) = unbounded<Int>()
+            s.send(1)
+            s.close()
+            val drained = r.recv()
+            assertIs<RecvOutcome.Ok<Int>>(drained)
+            assertEquals(1, drained.value)
+            assertSame(RecvOutcome.Err, r.recv())
+        }
 
     @Test
-    fun sendReceiveAcrossMultipleClones() = runTest {
-        val (s, r) = unbounded<Int>()
-        val s2 = s.clone()
-        s.send(1)
-        s2.send(2)
-        val first = (r.recv() as RecvOutcome.Ok<Int>).value
-        val second = (r.recv() as RecvOutcome.Ok<Int>).value
-        assertEquals(setOf(1, 2), setOf(first, second))
-        assertEquals(2, s.senderCount())
-    }
+    fun sendReceiveAcrossMultipleClones() =
+        runTest {
+            val (s, r) = unbounded<Int>()
+            val s2 = s.clone()
+            s.send(1)
+            s2.send(2)
+            val first = (r.recv() as RecvOutcome.Ok<Int>).value
+            val second = (r.recv() as RecvOutcome.Ok<Int>).value
+            assertEquals(setOf(1, 2), setOf(first, second))
+            assertEquals(2, s.senderCount())
+        }
 }
 
 class ChannelMetricsTest {
     @Test
-    fun lenTracksBufferedMessages() = runTest {
-        val (s, r) = unbounded<Int>()
-        assertEquals(0, s.len())
-        assertTrue(s.isEmpty())
-        s.send(1)
-        s.send(2)
-        assertEquals(2, s.len())
-        assertEquals(2, r.len())
-        assertFalse(r.isEmpty())
-        r.recv()
-        assertEquals(1, r.len())
-    }
+    fun lenTracksBufferedMessages() =
+        runTest {
+            val (s, r) = unbounded<Int>()
+            assertEquals(0, s.len())
+            assertTrue(s.isEmpty())
+            s.send(1)
+            s.send(2)
+            assertEquals(2, s.len())
+            assertEquals(2, r.len())
+            assertFalse(r.isEmpty())
+            r.recv()
+            assertEquals(1, r.len())
+        }
 
     @Test
-    fun isFullForBounded() = runTest {
-        val (s, _) = bounded<Int>(1)
-        assertFalse(s.isFull())
-        s.send(1)
-        assertTrue(s.isFull())
-    }
+    fun isFullForBounded() =
+        runTest {
+            val (s, _) = bounded<Int>(1)
+            assertFalse(s.isFull())
+            s.send(1)
+            assertTrue(s.isFull())
+        }
 
     @Test
-    fun unboundedIsNeverFull() = runTest {
-        val (s, _) = unbounded<Int>()
-        s.send(1)
-        s.send(2)
-        s.send(3)
-        assertFalse(s.isFull())
-    }
+    fun unboundedIsNeverFull() =
+        runTest {
+            val (s, _) = unbounded<Int>()
+            s.send(1)
+            s.send(2)
+            s.send(3)
+            assertFalse(s.isFull())
+        }
 }
 
 class WeakReferencesTest {
@@ -193,5 +203,38 @@ class WeakReferencesTest {
         val weak = r.downgrade()
         s.close()
         assertNull(weak.upgrade())
+    }
+}
+
+class ReceiverStreamTest {
+    @Test
+    fun streamPollNextReceivesMessages() {
+        val (s, r) = unbounded<Int>()
+        val cx = TaskContext()
+        assertFalse(r.isTerminated())
+        assertEquals(Poll.Pending, r.pollNext(cx))
+
+        s.trySend(42)
+        val poll1 = r.pollNext(cx)
+        assertIs<Poll.Ready<Yield<Int>>>(poll1)
+        val yield1 = poll1.value
+        assertIs<Yield.Value<Int>>(yield1)
+        assertEquals(42, yield1.value)
+
+        s.close()
+        val poll2 = r.pollNext(cx)
+        assertIs<Poll.Ready<Yield<Int>>>(poll2)
+        assertEquals(Yield.End, poll2.value)
+        assertTrue(r.isTerminated())
+    }
+
+    @Test
+    fun streamSizeHint() {
+        val (s, r) = bounded<Int>(10)
+        assertEquals(0, r.sizeHint().lower)
+        assertEquals(10, r.sizeHint().upper)
+        s.trySend(1)
+        assertEquals(1, r.sizeHint().lower)
+        assertEquals(10, r.sizeHint().upper)
     }
 }
