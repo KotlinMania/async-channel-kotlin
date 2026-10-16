@@ -38,8 +38,14 @@ public class Receiver<T> internal constructor(
                 state.decrementSize()
                 TryRecvOutcome.Ok(result.getOrThrow())
             }
-            result.isClosed -> TryRecvOutcome.Err(TryRecvError.Closed)
-            else -> TryRecvOutcome.Err(TryRecvError.Empty)
+
+            result.isClosed -> {
+                TryRecvOutcome.Err(TryRecvError.Closed)
+            }
+
+            else -> {
+                TryRecvOutcome.Err(TryRecvError.Empty)
+            }
         }
     }
 
@@ -149,7 +155,10 @@ public class Receiver<T> internal constructor(
 
     override fun pollNext(context: TaskContext): Poll<Yield<T>> =
         when (val outcome = tryRecv()) {
-            is TryRecvOutcome.Ok -> Poll.Ready(Yield.Value(outcome.value))
+            is TryRecvOutcome.Ok -> {
+                Poll.Ready(Yield.Value(outcome.value))
+            }
+
             is TryRecvOutcome.Err -> {
                 when (outcome.error) {
                     TryRecvError.Closed -> Poll.Ready(Yield.End)

@@ -28,8 +28,14 @@ public class Sender<T> internal constructor(
                 state.incrementSize()
                 null
             }
-            result.isClosed -> TrySendError.Closed(msg)
-            else -> TrySendError.Full(msg)
+
+            result.isClosed -> {
+                TrySendError.Closed(msg)
+            }
+
+            else -> {
+                TrySendError.Full(msg)
+            }
         }
     }
 
@@ -76,7 +82,11 @@ public class Sender<T> internal constructor(
                     state.incrementSize()
                     return ForceSendOutcome.Ok(replaced = null)
                 }
-                result.isClosed -> return ForceSendOutcome.Err(SendError(msg))
+
+                result.isClosed -> {
+                    return ForceSendOutcome.Err(SendError(msg))
+                }
+
                 else -> {
                     val removed = state.queue.tryReceive()
                     if (removed.isSuccess) {
@@ -87,8 +97,14 @@ public class Sender<T> internal constructor(
                                 state.incrementSize()
                                 ForceSendOutcome.Ok(replaced = removed.getOrThrow())
                             }
-                            sendResult.isClosed -> ForceSendOutcome.Err(SendError(msg))
-                            else -> continue
+
+                            sendResult.isClosed -> {
+                                ForceSendOutcome.Err(SendError(msg))
+                            }
+
+                            else -> {
+                                continue
+                            }
                         }
                     }
                 }
