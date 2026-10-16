@@ -75,3 +75,4 @@ local.properties
 # npm install output; JS dependencies come from yarn via the Kotlin Gradle plugin
 node_modules/
 package-lock.json
+!native/node-ffi/package-lock.json

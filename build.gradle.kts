@@ -824,6 +824,15 @@ kotlin {
     }
 
     sourceSets {
+        // The template's native-binding placeholders live in the template
+        // package. The project.ffi.* switches decide whether they compile, the
+        // same way they gate the C/JNI/N-API builds.
+        if (!napiFfiEnabled) {
+            jsMain { kotlin.exclude("io/github/kotlinmania/template/**") }
+        }
+        if (!jvmFfiEnabled) {
+            jvmMain { kotlin.exclude("io/github/kotlinmania/template/internal/**") }
+        }
         commonMain.dependencies {
             implementation(commonMainDependencyBundle)
         }
