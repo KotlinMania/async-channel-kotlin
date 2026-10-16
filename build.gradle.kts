@@ -49,7 +49,6 @@ version = providers.gradleProperty("project.version").getOrElse("0.1.0-SNAPSHOT"
 val frameworkName = providers.gradleProperty("project.frameworkName").getOrElse("Unnamed")
 val projectNamespace = providers.gradleProperty("project.namespace").getOrElse("io.github.kotlinmania")
 val kotlinVersion = providers.gradleProperty("versions.kotlin").getOrElse("2.4.0")
-val isCodeqlBuild = providers.gradleProperty("kotlinmania.codeql").map(String::toBoolean).getOrElse(false)
 val commonMainBundleName = providers.gradleProperty("project.dependencies.commonMainBundle").get()
 val commonMainDependencyBundle =
     extensions
@@ -79,6 +78,31 @@ fun optionalTrimmedProperty(name: String): String? =
 val enabledFeatureNames = csvProperty("project.features")
 val benchmarkEnabled = "benchmark" in enabledFeatureNames
 val benchmarkTargetNames = csvProperty("project.benchmark.targets")
+
+// ============================================================================
+// Native C bindings — per-channel opt-in gates (gradle.properties
+// `project.ffi.{native,jvm,napi,name}`). All default off.
+// Transliterated from libc-kotlin's build.gradle.kts; generalized so tasks,
+// file paths, and npm package names all derive from project.ffi.name.
+// ============================================================================
+fun boolProperty(name: String, default: Boolean = false): Boolean =
+    providers.gradleProperty(name).map { it.trim().lowercase() == "true" }.getOrElse(default)
+
+val nativeFfiEnabled = boolProperty("project.ffi.native")
+val jvmFfiEnabled = boolProperty("project.ffi.jvm")
+val napiFfiEnabled = boolProperty("project.ffi.napi")
+
+val ffiNameRaw = providers.gradleProperty("project.ffi.name").getOrElse("Ffi").trim()
+val ffiName = ffiNameRaw.replaceFirstChar { it.uppercase() } // Libc, Png, ...
+val ffiNameLower = ffiNameRaw.lowercase() // libc, png, ...
+val ffiDefFile = "src/nativeInterop/cinterop/$ffiName.def"
+val ffiWrapperBase = "${ffiNameLower}_wrapper" // libc_wrapper
+val ffiNapiDir = "native/node-$ffiNameLower" // native/node-libc
+val ffiNpmPackage = "@kotlinmania/$ffiNameLower-native-bindings" // @kotlinmania/libc-native-bindings
+
+if (nativeFfiEnabled || jvmFfiEnabled || napiFfiEnabled) {
+    println("FFI channels enabled: native=$nativeFfiEnabled jvm=$jvmFfiEnabled napi=$napiFfiEnabled name=$ffiName")
+}
 val commonBenchmarkBundleName = optionalTrimmedProperty("project.dependencies.commonBenchmarkBundle")
 val commonBenchmarkDependencyBundle =
     commonBenchmarkBundleName?.let { bundleName ->
@@ -419,10 +443,7 @@ kotlin {
         configureBenchmarkCompilation()
         addToXcf()
     }
-    watchosArm64 {
-        configureBenchmarkCompilation()
-        addToXcf()
-    }
+    // watchosArm64 (WatchOS 32 / arm64_32): retired by workspace policy (§5.5.1). WatchOS 32 is not supported.
     watchosDeviceArm64 {
         configureBenchmarkCompilation()
         addToXcf()
@@ -430,13 +451,6 @@ kotlin {
     watchosSimulatorArm64 {
         configureBenchmarkCompilation()
         addToXcf()
-    }
-
-    // iosX64: Intel Mac simulator. Tier 3 in Kotlin/Native but NOT deprecated —
-    // Apple still ships x86_64 iOS simulator runtimes, so it is always built.
-    iosX64 {
-        configureBenchmarkCompilation()
-        addToXcf(static = true)
     }
 
     // Other native — Tier 1/2
@@ -495,6 +509,266 @@ kotlin {
         configureBenchmarkCompilation()
         compilerOptions {
             jvmTarget.set(JvmTarget.fromTarget(jvmToolchainVersion.toString()))
+        }
+    }
+
+    // ========================================================================
+    // Native FFI — Kotlin/Native cinterop + per-target static wrapper library.
+    // Gated by project.ffi.native=true in gradle.properties. Transliterated
+    // from libc-kotlin's build.gradle.kts:465-683 with the libc-specific
+    // literals parameterized on project.ffi.name.
+    //
+    // For each Kotlin/Native target this registers a compile${ffiName}WrapperFor<Target>
+    // task that compiles ${ffiWrapperBase}.c into ${ffiWrapperBase}.a using the
+    // correct host or cross toolchain (Apple via xcrun, Android NDK via the
+    // Kotlin/Native-downloaded toolchain, Linux via host clang or the konan
+    // GCC cross-archive, MinGW via the konan msys2 toolchain). It then wires
+    // the generated static library into the cinterop definition read from
+    // src/nativeInterop/cinterop/${ffiName}.def so the wrapper's function
+    // bodies are available to the Kotlin bindings as `import ${ffiNameLower}.*`.
+    //
+    // Host-capability fallbacks: if the cross toolchain for a target is not
+    // installed on this host (e.g. linuxArm64 from macOS without the GCC
+    // archive downloaded), the task falls back to a pre-built archive at
+    // src/nativeInterop/cinterop/targets/<konan_target>/${ffiWrapperBase}.a,
+    // and fails loudly if neither is available.
+    // ========================================================================
+    if (nativeFfiEnabled) {
+        fun ensureKonanDependency(name: String, konanDeps: File, execOps: ExecOperations) {
+            val targetDir = File(konanDeps, name)
+            if (targetDir.exists()) return
+            konanDeps.mkdirs()
+            val cacheDir = File(konanDeps, "cache").apply { mkdirs() }
+            val archive = File(cacheDir, "$name.tar.gz")
+            val url = "https://download.jetbrains.com/kotlin/native/$name.tar.gz"
+            if (!archive.exists() || archive.length() == 0L) {
+                println("Downloading Kotlin/Native dependency $name from $url ...")
+                execOps
+                    .exec {
+                        commandLine("curl", "-sSL", url, "-o", archive.absolutePath)
+                    }.assertNormalExitValue()
+            }
+            println("Extracting $archive into $konanDeps ...")
+            execOps
+                .exec {
+                    commandLine("tar", "-xzf", archive.absolutePath, "-C", konanDeps.absolutePath)
+                }.assertNormalExitValue()
+        }
+
+        targets.withType<KotlinNativeTarget> {
+            val konanTargetName = konanTarget.name
+            val targetCapitalized = name.replaceFirstChar { it.uppercase() }
+            val wrapperTaskName = "compile${ffiName}WrapperFor$targetCapitalized"
+            val wrapperTask =
+                tasks.register(wrapperTaskName) {
+                    group = "build"
+                    description = "Compiles $ffiWrapperBase.c into a static library for $konanTargetName"
+                    val cSource = file("src/nativeInterop/cinterop/$ffiWrapperBase.c")
+                    val hSource = file("src/nativeInterop/cinterop/$ffiWrapperBase.h")
+                    val outDir =
+                        layout.buildDirectory
+                            .dir("cinterop-targets/$konanTargetName")
+                            .get()
+                            .asFile
+                    val outFile = File(outDir, "$ffiWrapperBase.a")
+                    inputs.file(cSource)
+                    inputs.file(hSource)
+                    outputs.file(outFile)
+
+                    doLast {
+                        outDir.mkdirs()
+                        if (outFile.exists()) outFile.delete()
+                        val tempObj = File(outDir, "$ffiWrapperBase.o")
+                        val konanDeps = File(System.getProperty("user.home"), ".konan/dependencies")
+                        val isMac =
+                            org.gradle.internal.os.OperatingSystem
+                                .current()
+                                .isMacOsX
+                        val isLinux =
+                            org.gradle.internal.os.OperatingSystem
+                                .current()
+                                .isLinux
+                        val isWindows =
+                            org.gradle.internal.os.OperatingSystem
+                                .current()
+                                .isWindows
+                        val execOps = project.serviceOf<ExecOperations>()
+
+                        when {
+                            isMac &&
+                                (
+                                    konanTargetName.startsWith("macos") ||
+                                        konanTargetName.startsWith("ios") ||
+                                        konanTargetName.startsWith("tvos") ||
+                                        konanTargetName.startsWith("watchos")
+                                ) -> {
+                                val (appleTriple, sdkName) =
+                                    when (konanTargetName) {
+                                        "macos_arm64" -> "arm64-apple-macos14.0" to "macosx"
+                                        "macos_x64" -> "x86_64-apple-macos14.0" to "macosx"
+                                        "ios_arm64" -> "arm64-apple-ios14.0" to "iphoneos"
+                                        "ios_simulator_arm64" -> "arm64-apple-ios14.0-simulator" to "iphonesimulator"
+                                        "ios_x64" -> "x86_64-apple-ios14.0-simulator" to "iphonesimulator"
+                                        "watchos_device_arm64" -> "arm64-apple-watchos7.0" to "watchos"
+                                        "watchos_simulator_arm64" -> "arm64-apple-watchos7.0-simulator" to "watchsimulator"
+                                        "tvos_arm64" -> "arm64-apple-tvos14.0" to "appletvos"
+                                        "tvos_simulator_arm64" -> "arm64-apple-tvos14.0-simulator" to "appletvsimulator"
+                                        else -> "arm64-apple-macos14.0" to "macosx"
+                                    }
+                                execOps
+                                    .exec {
+                                        commandLine("xcrun", "-sdk", sdkName, "clang", "-target", appleTriple, "-Wall", "-Wextra", "-Werror", "-c", "-I${cSource.parent}", cSource.absolutePath, "-o", tempObj.absolutePath)
+                                    }.assertNormalExitValue()
+                                execOps
+                                    .exec {
+                                        commandLine("xcrun", "-sdk", sdkName, "ar", "rcs", outFile.absolutePath, tempObj.absolutePath)
+                                    }.assertNormalExitValue()
+                            }
+
+                            konanTargetName.startsWith("android") -> {
+                                val hostToolchain = if (isMac) "osx" else "linux"
+                                ensureKonanDependency("target-toolchain-2-$hostToolchain-android_ndk", konanDeps, execOps)
+                                ensureKonanDependency("target-sysroot-1-android_ndk", konanDeps, execOps)
+                                val ndkDir = File(konanDeps, "target-toolchain-2-$hostToolchain-android_ndk")
+                                val sysroot = File(ndkDir, "sysroot")
+                                val clangBin =
+                                    if (konanTargetName.contains("arm64")) {
+                                        File(ndkDir, "bin/aarch64-linux-android21-clang")
+                                    } else {
+                                        File(ndkDir, "bin/x86_64-linux-android21-clang")
+                                    }
+                                val arBin =
+                                    if (konanTargetName.contains("arm64")) {
+                                        File(ndkDir, "bin/aarch64-linux-android-ar")
+                                    } else {
+                                        File(ndkDir, "bin/x86_64-linux-android-ar")
+                                    }
+                                if (clangBin.exists() && sysroot.exists()) {
+                                    execOps
+                                        .exec {
+                                            commandLine(clangBin.absolutePath, "--sysroot=${sysroot.absolutePath}", "-Wall", "-Wextra", "-Werror", "-c", "-I${cSource.parent}", cSource.absolutePath, "-o", tempObj.absolutePath)
+                                        }.assertNormalExitValue()
+                                    execOps
+                                        .exec {
+                                            commandLine(arBin.absolutePath, "rcs", outFile.absolutePath, tempObj.absolutePath)
+                                        }.assertNormalExitValue()
+                                } else {
+                                    val prebuilt = file("src/nativeInterop/cinterop/targets/$konanTargetName/$ffiWrapperBase.a")
+                                    val fallbackPrebuilt = file("src/nativeInterop/cinterop/$ffiWrapperBase.a")
+                                    if (prebuilt.exists()) {
+                                        prebuilt.copyTo(outFile, overwrite = true)
+                                    } else if (fallbackPrebuilt.exists()) {
+                                        fallbackPrebuilt.copyTo(outFile, overwrite = true)
+                                    }
+                                }
+                            }
+
+                            konanTargetName.startsWith("linux") -> {
+                                val (targetTriple, gccDirName) =
+                                    if (konanTargetName.contains("arm64")) {
+                                        "aarch64-unknown-linux-gnu" to "aarch64-unknown-linux-gnu-gcc-8.3.0-glibc-2.25-kernel-4.9-2"
+                                    } else {
+                                        "x86_64-unknown-linux-gnu" to "x86_64-unknown-linux-gnu-gcc-8.3.0-glibc-2.19-kernel-4.9-2"
+                                    }
+                                if (isLinux) {
+                                    execOps
+                                        .exec {
+                                            commandLine("clang", "-Wall", "-Wextra", "-Werror", "-c", "-I${cSource.parent}", cSource.absolutePath, "-o", tempObj.absolutePath)
+                                        }.assertNormalExitValue()
+                                    execOps
+                                        .exec {
+                                            commandLine("ar", "rcs", outFile.absolutePath, tempObj.absolutePath)
+                                        }.assertNormalExitValue()
+                                } else if (isMac) {
+                                    ensureKonanDependency(gccDirName, konanDeps, execOps)
+                                    ensureKonanDependency("target-toolchain-2-osx-android_ndk", konanDeps, execOps)
+                                    val sysroot = File(konanDeps, "$gccDirName/$targetTriple/sysroot")
+                                    val llvmAr = File(konanDeps, "target-toolchain-2-osx-android_ndk/bin/llvm-ar")
+                                    if (sysroot.exists() && llvmAr.exists()) {
+                                        execOps
+                                            .exec {
+                                                commandLine("clang", "--target=$targetTriple", "--sysroot=${sysroot.absolutePath}", "-Wall", "-Wextra", "-Werror", "-c", "-I${cSource.parent}", cSource.absolutePath, "-o", tempObj.absolutePath)
+                                            }.assertNormalExitValue()
+                                        execOps
+                                            .exec {
+                                                commandLine(llvmAr.absolutePath, "rcs", outFile.absolutePath, tempObj.absolutePath)
+                                            }.assertNormalExitValue()
+                                    } else {
+                                        val prebuilt = file("src/nativeInterop/cinterop/targets/$konanTargetName/$ffiWrapperBase.a")
+                                        if (prebuilt.exists()) prebuilt.copyTo(outFile, overwrite = true)
+                                    }
+                                } else {
+                                    val prebuilt = file("src/nativeInterop/cinterop/targets/$konanTargetName/$ffiWrapperBase.a")
+                                    if (prebuilt.exists()) prebuilt.copyTo(outFile, overwrite = true)
+                                }
+                            }
+
+                            konanTargetName.startsWith("mingw") -> {
+                                ensureKonanDependency("msys2-mingw-w64-x86_64-2", konanDeps, execOps)
+                                val mingwSysroot = File(konanDeps, "msys2-mingw-w64-x86_64-2")
+                                val arExe = File(mingwSysroot, "bin/ar.exe")
+                                if (isWindows && mingwSysroot.exists()) {
+                                    execOps
+                                        .exec {
+                                            commandLine("clang", "--target=x86_64-w64-mingw32", "--sysroot=${mingwSysroot.absolutePath}", "-Wall", "-Wextra", "-Werror", "-c", "-I${cSource.parent}", cSource.absolutePath, "-o", tempObj.absolutePath)
+                                        }.assertNormalExitValue()
+                                    execOps
+                                        .exec {
+                                            commandLine(if (arExe.exists()) arExe.absolutePath else "ar", "rcs", outFile.absolutePath, tempObj.absolutePath)
+                                        }.assertNormalExitValue()
+                                } else if (isMac) {
+                                    ensureKonanDependency("target-toolchain-2-osx-android_ndk", konanDeps, execOps)
+                                    val llvmAr = File(konanDeps, "target-toolchain-2-osx-android_ndk/bin/llvm-ar")
+                                    if (mingwSysroot.exists() && llvmAr.exists()) {
+                                        execOps
+                                            .exec {
+                                                commandLine("clang", "--target=x86_64-w64-mingw32", "--sysroot=${mingwSysroot.absolutePath}", "-Wall", "-Wextra", "-Werror", "-c", "-I${cSource.parent}", cSource.absolutePath, "-o", tempObj.absolutePath)
+                                            }.assertNormalExitValue()
+                                        execOps
+                                            .exec {
+                                                commandLine(llvmAr.absolutePath, "rcs", outFile.absolutePath, tempObj.absolutePath)
+                                            }.assertNormalExitValue()
+                                    } else {
+                                        val prebuilt = file("src/nativeInterop/cinterop/targets/mingw_x64/$ffiWrapperBase.a")
+                                        if (prebuilt.exists()) prebuilt.copyTo(outFile, overwrite = true)
+                                    }
+                                } else {
+                                    val prebuilt = file("src/nativeInterop/cinterop/targets/mingw_x64/$ffiWrapperBase.a")
+                                    if (prebuilt.exists()) prebuilt.copyTo(outFile, overwrite = true)
+                                }
+                            }
+
+                            else -> {
+                                val prebuilt = file("src/nativeInterop/cinterop/targets/$konanTargetName/$ffiWrapperBase.a")
+                                if (prebuilt.exists()) prebuilt.copyTo(outFile, overwrite = true)
+                            }
+                        }
+                        tempObj.delete()
+                        if (!outFile.exists() || outFile.length() == 0L) {
+                            throw GradleException("compile${ffiName}Wrapper failed: output library does not exist for $konanTargetName at ${outFile.absolutePath}")
+                        }
+                    }
+                }
+
+            compilations.getByName("main") {
+                cinterops {
+                    create(ffiNameLower) {
+                        defFile(project.file(ffiDefFile))
+                        packageName("$ffiNameLower.cinterop")
+                        extraOpts(
+                            "-libraryPath",
+                            layout.buildDirectory
+                                .dir("cinterop-targets/$konanTargetName")
+                                .get()
+                                .asFile.absolutePath,
+                        )
+                    }
+                }
+            }
+            tasks.matching { it.name == "cinterop${ffiName}$targetCapitalized" }.configureEach {
+                dependsOn(wrapperTask)
+                inputs.files(wrapperTask)
+            }
         }
     }
 

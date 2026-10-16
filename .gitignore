@@ -69,3 +69,6 @@ DerivedData/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
+local.properties
+node_modules/
+package-lock.json
