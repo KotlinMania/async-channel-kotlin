@@ -31,32 +31,32 @@ import kotlin.test.assertTrue
 // those two unported tests.
 
 private fun assertSendOk(outcome: SendOutcome<*>) {
-    assertSame(SendOutcome.Ok, outcome)
+    assertTrue(outcome.isOk(), "expected Ok, got $outcome")
 }
 
 private fun <T> assertSendErr(outcome: SendOutcome<T>, expected: T) {
-    val err = outcome as? SendOutcome.Err ?: error("expected Err, got $outcome")
-    assertEquals(expected, err.error.value)
+    val err = outcome.error ?: error("expected Err, got $outcome")
+    assertEquals(expected, err.value)
 }
 
 private fun <T> assertRecvOk(outcome: RecvOutcome<T>, expected: T) {
-    val ok = outcome as? RecvOutcome.Ok ?: error("expected Ok, got $outcome")
-    assertEquals(expected, ok.value)
+    assertTrue(outcome.isOk(), "expected Ok, got $outcome")
+    assertEquals(expected, outcome.getOrThrow())
 }
 
 private fun <T> assertTryRecvOk(outcome: TryRecvOutcome<T>, expected: T) {
-    val ok = outcome as? TryRecvOutcome.Ok ?: error("expected Ok, got $outcome")
-    assertEquals(expected, ok.value)
+    assertTrue(outcome.isOk(), "expected Ok, got $outcome")
+    assertEquals(expected, outcome.getOrThrow())
 }
 
 private fun <T> assertTryRecvErr(outcome: TryRecvOutcome<T>, expected: TryRecvError) {
-    val err = outcome as? TryRecvOutcome.Err ?: error("expected Err, got $outcome")
-    assertEquals(expected, err.error)
+    assertTrue(outcome.isErr(), "expected Err, got $outcome")
+    assertEquals(expected, outcome.error)
 }
 
 private fun <T> assertForceSendOk(outcome: ForceSendOutcome<T>, expected: T?) {
-    val ok = outcome as? ForceSendOutcome.Ok ?: error("expected Ok, got $outcome")
-    assertEquals(expected, ok.replaced)
+    assertTrue(outcome.isOk(), "expected Ok, got $outcome")
+    assertEquals(expected, outcome.replaced)
 }
 
 class BoundedTest {
@@ -153,7 +153,7 @@ class BoundedTest {
                 assertRecvOk(r.recv(), 8)
                 delay(10)
                 assertRecvOk(r.recv(), 9)
-                assertSame(RecvOutcome.Err, r.recv())
+                assertTrue(r.recv().isErr())
             }
             launch {
                 delay(15)
@@ -291,7 +291,7 @@ class BoundedTest {
             assertRecvOk(r.recv(), 1)
             assertRecvOk(r.recv(), 2)
             assertRecvOk(r.recv(), 3)
-            assertSame(RecvOutcome.Err, r.recv())
+            assertTrue(r.recv().isErr())
         }
 
     @Test
@@ -386,7 +386,7 @@ class BoundedTest {
 
             val consumer =
                 launch {
-                    assertSame(RecvOutcome.Err, r.recv())
+                    assertTrue(r.recv().isErr())
                 }
             val closer =
                 launch {
@@ -409,7 +409,7 @@ class BoundedTest {
                     for (i in 0 until count) {
                         assertRecvOk(r.recv(), i)
                     }
-                    assertSame(RecvOutcome.Err, r.recv())
+                    assertTrue(r.recv().isErr())
                 }
             val producer =
                 async {
@@ -435,8 +435,8 @@ class BoundedTest {
                 List(workers) {
                     async {
                         repeat(count) {
-                            val ok = r.recv() as RecvOutcome.Ok<Int>
-                            seen[ok.value] += 1
+                            val ok = r.recv().getOrThrow()
+                            seen[ok] += 1
                         }
                     }
                 }

@@ -7,7 +7,7 @@ import kotlinx.coroutines.runBlocking
  * Sends a message into the channel using the blocking strategy.
  *
  * If the channel is full, this function blocks the current thread until there
- * is room. If the channel is closed, it returns [SendOutcome.Err] carrying
+ * is room. If the channel is closed, it returns a [SendOutcome] whose [SendOutcome.error] carries
  * [SendError].
  *
  * Mirrors upstream `Sender::send_blocking`, gated in Rust by
@@ -27,7 +27,7 @@ public fun <T> Sender<T>.sendBlocking(msg: T): SendOutcome<T> =
  *
  * If the channel is empty, this function blocks the current thread until a
  * message arrives. If the channel is closed and drained, it returns
- * [RecvOutcome.Err] carrying [RecvError].
+ * a [RecvOutcome] whose [RecvOutcome.error] is [RecvError].
  *
  * Mirrors upstream `Receiver::recv_blocking`, gated in Rust by
  * `cfg(all(feature = "std", not(target_family = "wasm")))`. The same

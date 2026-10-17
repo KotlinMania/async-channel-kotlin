@@ -43,10 +43,10 @@ public class Sender<T> internal constructor(
      * Sends a message into the channel.
      *
      * If the channel is full, this method suspends until there is space for a message.
-     * If the channel is closed, this method returns [SendOutcome.Err] carrying [SendError].
+     * If the channel is closed, this method returns a [SendOutcome] whose [SendOutcome.error] carries [SendError].
      */
     public suspend fun send(msg: T): SendOutcome<T> {
-        if (state.isClosed) return SendOutcome.Err(SendError(msg))
+        if (state.isClosed) return SendOutcome.err(SendError(msg))
         return try {
             // The underlying kotlinx Channel does not wake a suspended sender when
             // close() is called while buffered items remain (the sender keeps
@@ -56,14 +56,14 @@ public class Sender<T> internal constructor(
             select<SendOutcome<T>> {
                 state.queue.onSend(msg) {
                     state.incrementSize()
-                    SendOutcome.Ok
+                    SendOutcome.ok()
                 }
                 state.closedSignal.onAwait {
-                    SendOutcome.Err(SendError(msg))
+                    SendOutcome.err(SendError(msg))
                 }
             }
         } catch (_: ClosedSendChannelException) {
-            SendOutcome.Err(SendError(msg))
+            SendOutcome.err(SendError(msg))
         }
     }
 
@@ -71,7 +71,7 @@ public class Sender<T> internal constructor(
      * Forcefully pushes a message into the channel.
      *
      * If the channel is full, this method replaces an existing message in the
-     * channel and returns it as [ForceSendOutcome.Ok.replaced]. If the channel
+     * channel and returns it as [ForceSendOutcome.replaced]. If the channel
      * is closed, this method returns an error.
      */
     public fun forceSend(msg: T): ForceSendOutcome<T> {
@@ -80,11 +80,11 @@ public class Sender<T> internal constructor(
             when {
                 result.isSuccess -> {
                     state.incrementSize()
-                    return ForceSendOutcome.Ok(replaced = null)
+                    return ForceSendOutcome.ok(replaced = null)
                 }
 
                 result.isClosed -> {
-                    return ForceSendOutcome.Err(SendError(msg))
+                    return ForceSendOutcome.err(SendError(msg))
                 }
 
                 else -> {
@@ -95,11 +95,11 @@ public class Sender<T> internal constructor(
                         return when {
                             sendResult.isSuccess -> {
                                 state.incrementSize()
-                                ForceSendOutcome.Ok(replaced = removed.getOrThrow())
+                                ForceSendOutcome.ok(replaced = removed.getOrThrow())
                             }
 
                             sendResult.isClosed -> {
-                                ForceSendOutcome.Err(SendError(msg))
+                                ForceSendOutcome.err(SendError(msg))
                             }
 
                             else -> {
@@ -215,32 +215,59 @@ public class WeakSender<T> internal constructor(
 }
 
 /**
- * Result of [Sender.send].
- *
- * Kept as a sealed interface rather than a [kotlin.Result] because [SendError]
- * is generic and Kotlin does not allow generic subclasses of [Throwable].
+ * Result of [Sender.send]: either the message was sent, or [error] carries the
+ * message back because the channel is closed.
  */
-public sealed interface SendOutcome<out T> {
-    /** Successfully sent. */
-    public data object Ok : SendOutcome<Nothing>
+public class SendOutcome<T> internal constructor(
+    /** The failure, or `null` when the message was sent. */
+    public val error: SendError<T>?,
+) {
+    /** Whether the message was sent. */
+    public fun isOk(): Boolean = error == null
 
-    /** Failed to send because the channel was closed. */
-    public data class Err<T>(
-        public val error: SendError<T>,
-    ) : SendOutcome<T>
+    /** Whether sending failed because the channel is closed. */
+    public fun isErr(): Boolean = error != null
+
+    override fun equals(other: Any?): Boolean = other is SendOutcome<*> && error == other.error
+
+    override fun hashCode(): Int = error?.hashCode() ?: 0
+
+    override fun toString(): String = if (error == null) "Ok" else "Err($error)"
+
+    internal companion object {
+        fun <T> ok(): SendOutcome<T> = SendOutcome(null)
+
+        fun <T> err(error: SendError<T>): SendOutcome<T> = SendOutcome(error)
+    }
 }
 
 /**
- * Result of [Sender.forceSend].
+ * Result of [Sender.forceSend]: either the message was sent, optionally
+ * displacing [replaced], or [error] carries the message back because the
+ * channel is closed.
  */
-public sealed interface ForceSendOutcome<out T> {
-    /** Successfully sent, optionally carrying the replaced message. */
-    public data class Ok<T>(
-        public val replaced: T?,
-    ) : ForceSendOutcome<T>
+public class ForceSendOutcome<T> internal constructor(
+    /** The message that was displaced to make room, if any. */
+    public val replaced: T?,
+    /** The failure, or `null` when the message was sent. */
+    public val error: SendError<T>?,
+) {
+    /** Whether the message was sent. */
+    public fun isOk(): Boolean = error == null
 
-    /** Failed to send because the channel was closed. */
-    public data class Err<T>(
-        public val error: SendError<T>,
-    ) : ForceSendOutcome<T>
+    /** Whether sending failed because the channel is closed. */
+    public fun isErr(): Boolean = error != null
+
+    override fun equals(other: Any?): Boolean =
+        other is ForceSendOutcome<*> && replaced == other.replaced && error == other.error
+
+    override fun hashCode(): Int = 31 * (replaced?.hashCode() ?: 0) + (error?.hashCode() ?: 0)
+
+    override fun toString(): String = if (error == null) "Ok(replaced=$replaced)" else "Err($error)"
+
+    internal companion object {
+        fun <T> ok(replaced: T?): ForceSendOutcome<T> = ForceSendOutcome(replaced, null)
+
+        fun <T> err(error: SendError<T>): ForceSendOutcome<T> = ForceSendOutcome(null, error)
+    }
 }

@@ -12,19 +12,20 @@ class BlockingTest {
     fun smokeBlocking() {
         val (s, r) = bounded<Int>(1)
 
-        assertSame(SendOutcome.Ok, s.sendBlocking(7))
-        val first = r.tryRecv() as? TryRecvOutcome.Ok ?: error("expected Ok")
-        assertEquals(7, first.value)
+        assertTrue(s.sendBlocking(7).isOk())
+        val first = r.tryRecv()
+        assertEquals(7, first.getOrThrow())
 
-        assertSame(SendOutcome.Ok, s.sendBlocking(8))
-        val second = runBlocking { r.recv() } as? RecvOutcome.Ok ?: error("expected Ok")
-        assertEquals(8, second.value)
+        assertTrue(s.sendBlocking(8).isOk())
+        val second = runBlocking { r.recv() }
+        assertEquals(8, second.getOrThrow())
 
-        assertSame(SendOutcome.Ok, runBlocking { s.send(9) })
-        val third = r.recvBlocking() as? RecvOutcome.Ok ?: error("expected Ok")
-        assertEquals(9, third.value)
+        assertTrue(runBlocking { s.send(9) }.isOk())
+        val third = r.recvBlocking()
+        assertEquals(9, third.getOrThrow())
 
-        val empty = r.tryRecv() as? TryRecvOutcome.Err ?: error("expected Err")
+        val empty = r.tryRecv()
+        assertTrue(empty.isErr(), "expected Err, got $empty")
         assertSame(TryRecvError.Empty, empty.error)
     }
 
@@ -32,10 +33,10 @@ class BlockingTest {
     fun sendBlockingRoundTrip() {
         val (s, r) = unbounded<Int>()
 
-        assertSame(SendOutcome.Ok, s.sendBlocking(1))
+        assertTrue(s.sendBlocking(1).isOk())
         val outcome = r.recvBlocking()
-        val ok = outcome as? RecvOutcome.Ok ?: error("expected Ok, got $outcome")
-        assertEquals(1, ok.value)
+        assertTrue(outcome.isOk(), "expected Ok, got $outcome")
+        assertEquals(1, outcome.getOrThrow())
     }
 
     @Test
@@ -45,32 +46,32 @@ class BlockingTest {
         s.close()
 
         val outcome = s.sendBlocking(7)
-        val err = outcome as? SendOutcome.Err ?: error("expected Err, got $outcome")
-        assertEquals(7, err.error.value)
+        val err = outcome.error ?: error("expected Err, got $outcome")
+        assertEquals(7, err.value)
 
-        assertSame(RecvOutcome.Err, r.recvBlocking())
+        assertTrue(r.recvBlocking().isErr())
     }
 
     @Test
     fun recvBlockingAfterCloseDrainsBuffer() {
         val (s, r) = bounded<Int>(3)
 
-        assertSame(SendOutcome.Ok, s.sendBlocking(1))
-        assertSame(SendOutcome.Ok, s.sendBlocking(2))
+        assertTrue(s.sendBlocking(1).isOk())
+        assertTrue(s.sendBlocking(2).isOk())
         s.close()
 
-        val first = r.recvBlocking() as? RecvOutcome.Ok ?: error("expected Ok")
-        assertEquals(1, first.value)
-        val second = r.recvBlocking() as? RecvOutcome.Ok ?: error("expected Ok")
-        assertEquals(2, second.value)
-        assertSame(RecvOutcome.Err, r.recvBlocking())
+        val first = r.recvBlocking()
+        assertEquals(1, first.getOrThrow())
+        val second = r.recvBlocking()
+        assertEquals(2, second.getOrThrow())
+        assertTrue(r.recvBlocking().isErr())
     }
 
     @Test
     fun trySendStillReportsFull() {
         val (s, _) = bounded<Int>(1)
 
-        assertSame(SendOutcome.Ok, s.sendBlocking(1))
+        assertTrue(s.sendBlocking(1).isOk())
         val outcome = s.trySend(2)
         assertTrue(outcome is TrySendError.Full)
     }
