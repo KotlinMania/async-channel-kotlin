@@ -8,26 +8,25 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 private fun assertSendOk(outcome: SendOutcome<*>) {
-    assertSame(SendOutcome.Ok, outcome)
+    assertTrue(outcome.isOk(), "expected Ok, got $outcome")
 }
 
 private fun <T> assertRecvOk(outcome: RecvOutcome<T>, expected: T) {
-    val ok = outcome as? RecvOutcome.Ok ?: error("expected Ok, got $outcome")
-    assertEquals(expected, ok.value)
+    assertTrue(outcome.isOk(), "expected Ok, got $outcome")
+    assertEquals(expected, outcome.getOrThrow())
 }
 
 private fun <T> assertTryRecvOk(outcome: TryRecvOutcome<T>, expected: T) {
-    val ok = outcome as? TryRecvOutcome.Ok ?: error("expected Ok, got $outcome")
-    assertEquals(expected, ok.value)
+    assertTrue(outcome.isOk(), "expected Ok, got $outcome")
+    assertEquals(expected, outcome.getOrThrow())
 }
 
 private fun <T> assertTryRecvErr(outcome: TryRecvOutcome<T>, expected: TryRecvError) {
-    val err = outcome as? TryRecvOutcome.Err ?: error("expected Err, got $outcome")
-    assertEquals(expected, err.error)
+    assertTrue(outcome.isErr(), "expected Err, got $outcome")
+    assertEquals(expected, outcome.error)
 }
 
 class UnboundedTest {
@@ -112,7 +111,7 @@ class UnboundedTest {
                 assertRecvOk(r.recv(), 8)
                 delay(10)
                 assertRecvOk(r.recv(), 9)
-                assertSame(RecvOutcome.Err, r.recv())
+                assertTrue(r.recv().isErr())
             }
             launch {
                 delay(15)
@@ -146,8 +145,8 @@ class UnboundedTest {
 
             r.close()
             val outcome = s.send(777)
-            assertTrue(outcome is SendOutcome.Err)
-            assertEquals(777, outcome.error.value)
+            val err = outcome.error ?: error("expected Err, got $outcome")
+            assertEquals(777, err.value)
         }
 
     @Test
@@ -162,8 +161,8 @@ class UnboundedTest {
             r.close()
 
             val sendOutcome = s.send(4)
-            assertTrue(sendOutcome is SendOutcome.Err)
-            assertEquals(4, sendOutcome.error.value)
+            val sendErr = sendOutcome.error ?: error("expected Err, got $sendOutcome")
+            assertEquals(4, sendErr.value)
             val trySendOutcome = s.trySend(5)
             assertTrue(trySendOutcome is TrySendError.Closed)
             assertEquals(5, trySendOutcome.value)
@@ -183,7 +182,7 @@ class UnboundedTest {
             assertRecvOk(r.recv(), 1)
             assertRecvOk(r.recv(), 2)
             assertRecvOk(r.recv(), 3)
-            assertSame(RecvOutcome.Err, r.recv())
+            assertTrue(r.recv().isErr())
         }
 
     @Test
@@ -234,7 +233,7 @@ class UnboundedTest {
             val (s, r) = unbounded<Unit>()
 
             launch {
-                assertSame(RecvOutcome.Err, r.recv())
+                assertTrue(r.recv().isErr())
             }
             launch {
                 delay(10)
@@ -254,7 +253,7 @@ class UnboundedTest {
                     for (i in 0 until count) {
                         assertRecvOk(r.recv(), i)
                     }
-                    assertSame(RecvOutcome.Err, r.recv())
+                    assertTrue(r.recv().isErr())
                 }
             val producer =
                 async {
@@ -279,9 +278,9 @@ class UnboundedTest {
             val consumers =
                 List(threads) {
                     async {
-                        for (i in 0 until count) {
-                            val ok = r.recv() as RecvOutcome.Ok<Int>
-                            v[ok.value] += 1
+                        repeat(count) {
+                            val ok = r.recv().getOrThrow()
+                            v[ok] += 1
                         }
                     }
                 }
@@ -316,7 +315,7 @@ class UnboundedTest {
                 List(threads) {
                     val receiver = r.clone()
                     async {
-                        for (i in 0 until count) {
+                        repeat(count) {
                             val value = receiver.next() ?: error("unexpected end of stream")
                             v[value] += 1
                         }

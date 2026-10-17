@@ -28,18 +28,24 @@ public class Receiver<T> internal constructor(
      * Attempts to receive a message from the channel.
      *
      * If the channel is empty (and possibly closed), returns the matching
-     * [TryRecvError] inside [TryRecvOutcome.Err]. On success, returns the
-     * value inside [TryRecvOutcome.Ok].
+     * [TryRecvError] in [TryRecvOutcome.error]. On success, returns the
+     * value in [TryRecvOutcome.value].
      */
     public fun tryRecv(): TryRecvOutcome<T> {
         val result = state.queue.tryReceive()
         return when {
             result.isSuccess -> {
                 state.decrementSize()
-                TryRecvOutcome.Ok(result.getOrThrow())
+                TryRecvOutcome.ok(result.getOrThrow())
             }
-            result.isClosed -> TryRecvOutcome.Err(TryRecvError.Closed)
-            else -> TryRecvOutcome.Err(TryRecvError.Empty)
+
+            result.isClosed -> {
+                TryRecvOutcome.err(TryRecvError.Closed)
+            }
+
+            else -> {
+                TryRecvOutcome.err(TryRecvError.Empty)
+            }
         }
     }
 
@@ -47,15 +53,15 @@ public class Receiver<T> internal constructor(
      * Receives a message from the channel.
      *
      * If the channel is empty, suspends until there is a message.
-     * If the channel is closed and drained, returns [RecvOutcome.Err] carrying [RecvError].
+     * If the channel is closed and drained, returns a [RecvOutcome] whose [RecvOutcome.error] is [RecvError].
      */
     public suspend fun recv(): RecvOutcome<T> =
         try {
             val value = state.queue.receive()
             state.decrementSize()
-            RecvOutcome.Ok(value)
+            RecvOutcome.ok(value)
         } catch (_: ClosedReceiveChannelException) {
-            RecvOutcome.Err
+            RecvOutcome.err()
         }
 
     /**
@@ -63,10 +69,7 @@ public class Receiver<T> internal constructor(
      * and drained.
      */
     public suspend fun next(): T? =
-        when (val outcome = recv()) {
-            is RecvOutcome.Ok -> outcome.value
-            is RecvOutcome.Err -> null
-        }
+        recv().value
 
     /**
      * Returns a cold [Flow] that emits every message from the channel and completes
@@ -148,12 +151,13 @@ public class Receiver<T> internal constructor(
     public fun sameChannel(other: Receiver<T>): Boolean = state === other.state
 
     override fun pollNext(context: TaskContext): Poll<Yield<T>> =
-        when (val outcome = tryRecv()) {
-            is TryRecvOutcome.Ok -> Poll.Ready(Yield.Value(outcome.value))
-            is TryRecvOutcome.Err -> {
+        tryRecv().let { outcome ->
+            if (outcome.isOk()) {
+                Poll.Ready(Yield.Value(outcome.getOrThrow()))
+            } else {
                 when (outcome.error) {
                     TryRecvError.Closed -> Poll.Ready(Yield.End)
-                    TryRecvError.Empty -> Poll.Pending
+                    else -> Poll.Pending
                 }
             }
         }
@@ -191,29 +195,86 @@ public class WeakReceiver<T> internal constructor(
 }
 
 /**
- * Result of [Receiver.recv].
+ * Holds a successfully received message, so that a `null` message is
+ * distinguishable from no message at all.
  */
-public sealed interface RecvOutcome<out T> {
-    /** Successfully received a message. */
-    public data class Ok<T>(
-        public val value: T,
-    ) : RecvOutcome<T>
+internal class Received<T>(
+    val value: T,
+)
 
-    /** Failed because the channel was empty and closed. */
-    public data object Err : RecvOutcome<Nothing>
+/**
+ * Result of [Receiver.recv]: either a received message, or [RecvError] because
+ * the channel is empty and closed.
+ */
+public class RecvOutcome<T> internal constructor(
+    private val received: Received<T>?,
+) {
+    /** The received message, or `null` on failure. */
+    public val value: T? get() = received?.value
+
+    /** [RecvError] on failure, or `null` when a message was received. */
+    public val error: RecvError? get() = if (received == null) RecvError else null
+
+    /** Whether a message was received. */
+    public fun isOk(): Boolean = received != null
+
+    /** Whether receiving failed because the channel is empty and closed. */
+    public fun isErr(): Boolean = received == null
+
+    /** Returns the received message, or throws [NoSuchElementException] on failure. */
+    public fun getOrThrow(): T {
+        val r = received ?: throw NoSuchElementException("receiving from an empty and closed channel")
+        return r.value
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is RecvOutcome<*> && isOk() == other.isOk() && value == other.value
+
+    override fun hashCode(): Int = if (received == null) -1 else received.value?.hashCode() ?: 0
+
+    override fun toString(): String = if (received == null) "Err($RecvError)" else "Ok(${received.value})"
+
+    internal companion object {
+        fun <T> ok(value: T): RecvOutcome<T> = RecvOutcome(Received(value))
+
+        fun <T> err(): RecvOutcome<T> = RecvOutcome(null)
+    }
 }
 
 /**
- * Result of [Receiver.tryRecv].
+ * Result of [Receiver.tryRecv]: either a received message, or [error] giving
+ * the reason no message was available.
  */
-public sealed interface TryRecvOutcome<out T> {
-    /** Successfully received a message. */
-    public data class Ok<T>(
-        public val value: T,
-    ) : TryRecvOutcome<T>
+public class TryRecvOutcome<T> internal constructor(
+    private val received: Received<T>?,
+    /** Why no message was received, or `null` when one was. */
+    public val error: TryRecvError?,
+) {
+    /** The received message, or `null` on failure. */
+    public val value: T? get() = received?.value
 
-    /** Failed to receive a message; carries the reason. */
-    public data class Err(
-        public val error: TryRecvError,
-    ) : TryRecvOutcome<Nothing>
+    /** Whether a message was received. */
+    public fun isOk(): Boolean = received != null
+
+    /** Whether no message was available. */
+    public fun isErr(): Boolean = received == null
+
+    /** Returns the received message, or throws [NoSuchElementException] with [error] on failure. */
+    public fun getOrThrow(): T {
+        val r = received ?: throw NoSuchElementException("no message available: $error")
+        return r.value
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is TryRecvOutcome<*> && isOk() == other.isOk() && value == other.value && error == other.error
+
+    override fun hashCode(): Int = 31 * (value?.hashCode() ?: 0) + (error?.hashCode() ?: 0)
+
+    override fun toString(): String = if (received == null) "Err($error)" else "Ok(${received.value})"
+
+    internal companion object {
+        fun <T> ok(value: T): TryRecvOutcome<T> = TryRecvOutcome(Received(value), null)
+
+        fun <T> err(error: TryRecvError): TryRecvOutcome<T> = TryRecvOutcome(null, error)
+    }
 }

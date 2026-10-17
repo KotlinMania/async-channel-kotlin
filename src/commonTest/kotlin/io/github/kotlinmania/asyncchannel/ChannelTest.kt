@@ -12,7 +12,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class BoundedFactoryTest {
@@ -41,10 +40,9 @@ class TrySendTryRecvTest {
     fun unboundedTrySendThenTryRecv() {
         val (s, r) = unbounded<Int>()
         assertNull(s.trySend(7))
-        when (val outcome = r.tryRecv()) {
-            is TryRecvOutcome.Ok -> assertEquals(7, outcome.value)
-            is TryRecvOutcome.Err -> error("expected Ok, got ${outcome.error}")
-        }
+        val outcome = r.tryRecv()
+        assertTrue(outcome.isOk(), "expected Ok, got $outcome")
+        assertEquals(7, outcome.getOrThrow())
     }
 
     @Test
@@ -70,20 +68,18 @@ class TrySendTryRecvTest {
     @Test
     fun tryRecvOnEmptyReturnsEmpty() {
         val (_, r) = unbounded<Int>()
-        when (val outcome = r.tryRecv()) {
-            is TryRecvOutcome.Err -> assertEquals(TryRecvError.Empty, outcome.error)
-            is TryRecvOutcome.Ok -> error("expected Empty, got ${outcome.value}")
-        }
+        val outcome = r.tryRecv()
+        assertTrue(outcome.isErr(), "expected Empty, got $outcome")
+        assertEquals(TryRecvError.Empty, outcome.error)
     }
 
     @Test
     fun tryRecvOnClosedDrainedReturnsClosed() {
         val (s, r) = unbounded<Int>()
         s.close()
-        when (val outcome = r.tryRecv()) {
-            is TryRecvOutcome.Err -> assertEquals(TryRecvError.Closed, outcome.error)
-            is TryRecvOutcome.Ok -> error("expected Closed, got ${outcome.value}")
-        }
+        val outcome = r.tryRecv()
+        assertTrue(outcome.isErr(), "expected Closed, got $outcome")
+        assertEquals(TryRecvError.Closed, outcome.error)
     }
 }
 
@@ -92,10 +88,10 @@ class SendRecvSuspendTest {
     fun sendThenRecv() =
         runTest {
             val (s, r) = unbounded<String>()
-            assertSame(SendOutcome.Ok, s.send("Hello"))
+            assertTrue(s.send("Hello").isOk())
             val received = r.recv()
-            assertIs<RecvOutcome.Ok<String>>(received)
-            assertEquals("Hello", received.value)
+            assertTrue(received.isOk(), "expected Ok, got $received")
+            assertEquals("Hello", received.getOrThrow())
         }
 
     @Test
@@ -104,8 +100,8 @@ class SendRecvSuspendTest {
             val (s, _) = unbounded<Int>()
             s.close()
             val outcome = s.send(42)
-            assertIs<SendOutcome.Err<Int>>(outcome)
-            assertEquals(42, outcome.error.value)
+            val err = outcome.error ?: error("expected Err, got $outcome")
+            assertEquals(42, err.value)
         }
 
     @Test
@@ -115,9 +111,9 @@ class SendRecvSuspendTest {
             s.send(1)
             s.close()
             val drained = r.recv()
-            assertIs<RecvOutcome.Ok<Int>>(drained)
-            assertEquals(1, drained.value)
-            assertSame(RecvOutcome.Err, r.recv())
+            assertTrue(drained.isOk(), "expected Ok, got $drained")
+            assertEquals(1, drained.getOrThrow())
+            assertTrue(r.recv().isErr())
         }
 
     @Test
@@ -127,8 +123,8 @@ class SendRecvSuspendTest {
             val s2 = s.clone()
             s.send(1)
             s2.send(2)
-            val first = (r.recv() as RecvOutcome.Ok<Int>).value
-            val second = (r.recv() as RecvOutcome.Ok<Int>).value
+            val first = r.recv().getOrThrow()
+            val second = r.recv().getOrThrow()
             assertEquals(setOf(1, 2), setOf(first, second))
             assertEquals(2, s.senderCount())
         }
