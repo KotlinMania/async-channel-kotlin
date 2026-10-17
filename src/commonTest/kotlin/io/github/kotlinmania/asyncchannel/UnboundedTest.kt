@@ -279,7 +279,7 @@ class UnboundedTest {
             val consumers =
                 List(threads) {
                     async {
-                        for (i in 0 until count) {
+                        repeat(count) {
                             val ok = r.recv() as RecvOutcome.Ok<Int>
                             v[ok.value] += 1
                         }
@@ -316,7 +316,7 @@ class UnboundedTest {
                 List(threads) {
                     val receiver = r.clone()
                     async {
-                        for (i in 0 until count) {
+                        repeat(count) {
                             val value = receiver.next() ?: error("unexpected end of stream")
                             v[value] += 1
                         }

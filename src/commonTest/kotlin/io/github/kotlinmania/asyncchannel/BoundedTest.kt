@@ -434,7 +434,7 @@ class BoundedTest {
             val consumers =
                 List(workers) {
                     async {
-                        for (i in 0 until count) {
+                        repeat(count) {
                             val ok = r.recv() as RecvOutcome.Ok<Int>
                             seen[ok.value] += 1
                         }
@@ -468,7 +468,7 @@ class BoundedTest {
             val consumers =
                 List(workers) {
                     async {
-                        for (i in 0 until count) {
+                        repeat(count) {
                             val value = r.next() ?: error("unexpected end of stream")
                             seen[value] += 1
                         }
